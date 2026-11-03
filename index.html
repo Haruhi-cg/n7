@@ -326,6 +326,8 @@ function fmtDay(k){const d=fromKey(k);return (d.getMonth()+1)+'/'+d.getDate()+'(
 function taskIcon(t){return '📌';}
 function taskKindName(t){return 'タスク';}
 function fmtDL(t){if(!t.deadline)return '';const d=new Date(t.deadline);return t.dlNoTime?fmtDay(dkey(d)):fmtDT(t.deadline);}
+function pctOf(t){if(t.done)return 100;return t.pct||0;}
+function progLabel(t){return t.done?'完了':'進捗 '+pctOf(t)+'%・残りの見込み '+fmtDur(t.remaining)+(t.spent?' ／ やった時間 計'+fmtDur(t.spent):'');}
 function whenLabel(t){return t.deadline?'期限 '+fmtDL(t)+'まで':'期限なし';}
 function atTime(date,min){const d=new Date(date);d.setHours(0,0,0,0);d.setMinutes(min);return d;}
 function findTask(text){
@@ -448,10 +450,13 @@ function handle(raw){
 function applyToTask(t,p,now,raw){
   const out=[];
   if(p.cancel){S.tasks=S.tasks.filter(x=>x.id!==t.id);return '🗑「'+t.title+'」を削除しました';}
-  if(p.pct!=null){t.remaining=Math.round(t.est*(100-p.pct)/100);out.push(p.pct>=100?'完了':'進捗 '+p.pct+'%');}
-  if(p.spent!=null){t.remaining=Math.max(0,t.remaining-p.spent);out.push(fmtDur(p.spent)+'進めた');}
-  if(p.left!=null){t.remaining=p.left;if(t.est<p.left)t.est=p.left;out.push('残り '+fmtDur(p.left));}
-  if(p.dur!=null&&p.spent==null&&p.left==null){t.est=p.dur;t.remaining=Math.min(t.remaining,p.dur);if(p.pct==null)t.remaining=p.dur;out.push('見込み '+fmtDur(p.dur));}
+  if(p.pct!=null){
+    if(p.pct>=100){t.pctBefore=pctOf(t);t.pct=100;t.done=true;t.doneAt=now.toISOString();out.push('完了');}
+    else{t.pct=p.pct;out.push('進捗 '+p.pct+'%');}
+  }
+  if(p.spent!=null){t.spent=(t.spent||0)+p.spent;out.push(fmtDur(p.spent)+'やった（計'+fmtDur(t.spent)+'）');}
+  if(p.left!=null){t.remaining=p.left;out.push('残りの見込み '+fmtDur(p.left));}
+  if(p.dur!=null&&p.spent==null&&p.left==null){t.est=p.dur;t.remaining=p.dur;out.push('見込み '+fmtDur(p.dur));}
   if(p.date||p.t!=null){
     const d=p.date||(t.deadline?new Date(t.deadline):new Date(now.getFullYear(),now.getMonth(),now.getDate()));
     t.deadline=atTime(d,p.t!=null?p.t:23*60+59).toISOString();t.dlNoTime=p.t==null;out.push('期限 '+fmtDL(t)+'まで');
@@ -459,10 +464,8 @@ function applyToTask(t,p,now,raw){
   if(p.noDl){t.deadline=null;out.push('期限なし');}
   if(p.cat){t.cat=p.cat;out.push('カテゴリ '+p.cat);}
   if(!out.length)return null;
-  if(t.remaining<=0){t.remaining=0;t.done=true;t.doneAt=now.toISOString();}
   t.log.push({t:now.toISOString(),x:raw});
-  const pct=Math.round(100*(1-t.remaining/t.est));
-  return (t.done?'✅ ':'📈 ')+t.title+'\n'+out.join(' ／ ')+(t.done?'':(out.some(o=>o.startsWith('期限'))?'':'\n'+whenLabel(t))+'\n進捗 '+pct+'%・残り '+fmtDur(t.remaining));
+  return (t.done?'✅ ':'📈 ')+t.title+'\n'+out.join(' ／ ')+(t.done?'':(out.some(o=>o.startsWith('期限'))?'':'\n'+whenLabel(t))+'\n'+progLabel(t));
 }
 function linkedEvents(t){return S.events.filter(e=>e.taskId===t.id);}
 function addLinkedEvent(t,dateKey,s,e){
@@ -490,8 +493,10 @@ const HELP=`「シフト」と送ると、ジョブカンのシフト取り込�
 　例：記録 昨日 21時 読書 1時間
 
 そのほかの書き方
-・レポート 半分 ／ レポート 30% ／ レポート 30分やった
-・レポート あと40分 ／ レポート 完了 ／ レポート 削除
+・レポート 半分 ／ レポート 30% ／ レポート 完了（進捗）
+・レポート 30分やった（やった時間を足すだけ。進捗は変わらない）
+・レポート あと40分（カレンダーに組む残りの時間を変える）
+・レポート 削除
 ・レポート 来週月曜まで ／ レポート 明日（期限の変更）
 ・レポート 期限なし
 ・レポート 明日 14:00-16:00 ／ レポート 明日14時から（タスクを残したまま予定にも入れる）
@@ -752,10 +757,10 @@ function renderTasks(){
   const act=S.tasks.filter(t=>!t.done),done=S.tasks.filter(t=>t.done).slice(-20).reverse();
   const groups={};act.forEach(t=>(groups[t.cat]=groups[t.cat]||[]).push(t));
   let html='';
-  const card=t=>{const pct=Math.round(100*(1-t.remaining/t.est));
+  const card=t=>{const pct=pctOf(t);
     const late=!t.done&&t.deadline&&new Date(t.deadline)<new Date();
     return '<div class="card" data-id="'+t.id+'"'+cv(t.cat)+'><div class="top"><span class="nm">'+esc(t.title)+'</span></div><div class="meta'+(late?' late':'')+'">'+whenLabel(t)+'</div>'
-    +'<div class="meta">'+(t.done?'完了':'進捗 '+pct+'%・残り '+fmtDur(t.remaining)+' ／ 見込み '+fmtDur(t.est))+'</div>'
+    +'<div class="meta">'+progLabel(t)+(t.done?'':' ／ 最初の見込み '+fmtDur(t.est))+'</div>'
     +(t.memo?'<div class="memo">'+esc(t.memo)+'</div>':'')
     +(linkedEvents(t).filter(e=>e.date>=dkey(new Date())).length?'<div class="meta">📅 作業の予定：'+linkedEvents(t).filter(e=>e.date>=dkey(new Date())).sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start).map(evLabel).join('、')+'</div>':'')
     +'<div class="bar"><i style="width:'+(t.done?100:pct)+'%"></i></div>'
@@ -790,9 +795,9 @@ function renderTasks(){
     const t=S.tasks.find(x=>x.id===c.dataset.id);if(!t)return;
     const now=new Date().toISOString();
     if(a==='log'){c.classList.toggle('open');return;}
-    if(a==='done'){t.remaining=0;t.done=true;t.doneAt=now;t.log.push({t:now,x:'完了'});}
-    if(a==='half'){t.remaining=Math.round(t.est/2);t.log.push({t:now,x:'半分'});}
-    if(a==='reopen'){t.done=false;t.remaining=Math.max(t.remaining,5);t.log.push({t:now,x:'再開'});}
+    if(a==='done'){t.pctBefore=pctOf(t);t.pct=100;t.done=true;t.doneAt=now;t.log.push({t:now,x:'完了'});}
+    if(a==='half'){t.pct=50;t.log.push({t:now,x:'半分'});}
+    if(a==='reopen'){t.done=false;t.pct=Math.min(t.pctBefore??0,90);t.remaining=Math.max(t.remaining,5);t.log.push({t:now,x:'再開'});}
     if(a==='del'){if(!confirm('「'+t.title+'」を削除しますか？'))return;S.tasks=S.tasks.filter(x=>x.id!==t.id);}
     save();renderAll();
   }));
@@ -827,7 +832,7 @@ function openEditor(c,onClose,opt){
     start:ev?hm(ev.start):(dl&&!t.dlNoTime?pad(Math.max(0,dl.getHours()-1))+':00':'10:00'),
     end:ev?hm(ev.end):null,
     place:ev?ev.place||'':'',
-    est:t?t.est:(ev.end-ev.start), remaining:t?t.remaining:(ev.end-ev.start)
+    est:t?t.est:(ev.end-ev.start), remaining:t?t.remaining:(ev.end-ev.start), pct:t?pctOf(t):0, spent:t?(t.spent||0):0
   };
   if(!F.end)F.end=hm(Math.min(1435,toMin(F.start)+(F.est||60)));
   const v=k=>{const el=c.querySelector('[data-f="'+k+'"]');return !el?undefined:(el.type==='checkbox'?el.checked:el.value);};
@@ -837,7 +842,8 @@ function openEditor(c,onClose,opt){
     if(v('noDl')!==undefined)F.noDl=v('noDl');
     if(v('addEv')!==undefined)F.addEv=v('addEv');
     ['evDate','evStart','evEnd'].forEach(k=>{const x=v(k);if(x!==undefined)F[k]=x;});
-    if(v('estH')!==undefined){F.est=hmVal('est');F.remaining=hmVal('remaining');}
+    if(v('estH')!==undefined){F.est=hmVal('est');F.remaining=hmVal('remaining');F.spent=hmVal('spent');}
+    if(v('pct')!==undefined)F.pct=+v('pct');
   }
   function draw(){
     let f='<div class="edit">';
@@ -849,7 +855,9 @@ function openEditor(c,onClose,opt){
         +(F.noDl?'':'<div class="row"><input type="date" data-f="dDate" value="'+F.dDate+'"><input type="time" step="300" data-f="dTime" value="'+F.dTime+'"></div>'
           +(F.dTime?'<button class="btn" data-e="clrTime" style="margin-top:6px">時刻を外す</button>':''))
         +'<label class="ck"><input type="checkbox" data-f="noDl"'+(F.noDl?' checked':'')+'> 期限なし</label>'
-        +'<label>見込み</label>'+hmInputs('est',F.est)+'<label>残り</label>'+hmInputs('remaining',F.remaining)
+        +'<label>進捗</label><select data-f="pct">'+[0,10,20,30,40,50,60,70,80,90,100].map(n=>'<option value="'+n+'"'+(n===F.pct?' selected':'')+'>'+(n===100?'100%（完了）':n+'%')+'</option>').join('')+(F.pct%10?'<option value="'+F.pct+'" selected>'+F.pct+'%</option>':'')+'</select>'
+        +'<label>最初の見込み</label>'+hmInputs('est',F.est)+'<label>残りの見込み（カレンダーに組む時間）</label>'+hmInputs('remaining',F.remaining)
+        +'<label>やった時間（進捗とは別）</label>'+hmInputs('spent',F.spent)
         +'<div class="evbox"><label class="ck"><input type="checkbox" data-f="addEv"'+(F.addEv?' checked':'')+'> 📅 予定としても入れる（タスクは残る）</label>'
         +(F.addEv?(()=>{if(!F.evEnd)F.evEnd=hm(Math.min(1435,toMin(F.evStart)+Math.max(15,F.remaining||30)));
             return '<label>やる日</label><input type="date" data-f="evDate" value="'+F.evDate+'">'
@@ -871,7 +879,7 @@ function openEditor(c,onClose,opt){
     c.querySelector('[data-e=save]').onclick=saveIt;
   }
   function saveIt(){
-    const oldEst=F.est,oldRem=F.remaining;collect();
+    collect();
     const title=F.title.trim();if(!title)return alert('内容を入れてください');
     const memo=F.memo.trim(),now=new Date().toISOString();
     let sum;
@@ -898,11 +906,9 @@ function openEditor(c,onClose,opt){
         const [H,M]=(F.dTime||'23:59').split(':').map(Number);
         x.deadline=new Date(y,m-1,d,H,M).toISOString();x.dlNoTime=!F.dTime;
       }
-      let est=Math.max(5,F.est||S.settings.defEst),rem=F.remaining;
-      if(t&&rem===oldRem&&est!==oldEst)rem=Math.round(oldRem/oldEst*est/5)*5;
-      x.est=est;x.remaining=Math.max(0,Math.min(rem,est));
-      if(x.remaining===0&&!x.done){x.done=true;x.doneAt=now;}
-      if(x.remaining>0&&x.done)x.done=false;
+      x.est=Math.max(5,F.est||S.settings.defEst);x.remaining=Math.max(0,F.remaining);x.spent=Math.max(0,F.spent||0);
+      if(F.pct>=100){if(!x.done){x.pctBefore=pctOf(x);x.done=true;x.doneAt=now;}x.pct=100;}
+      else{x.pct=F.pct;x.done=false;}
       let newEv=null;
       if(F.addEv){
         const s1=toMin(F.evStart),e1=toMin(F.evEnd);
@@ -911,7 +917,7 @@ function openEditor(c,onClose,opt){
       }
       x.log.push({t:now,x:'編集：'+(before?before+' → ':'')+x.title+' '+whenLabel(x)+' '+x.est+'分'});
       if(F.addEv)newEv=addLinkedEvent(x,F.evDate,toMin(F.evStart),toMin(F.evEnd));
-      sum=(ev?'✎ タスクに変えました':'✎ タスクを更新しました')+'\n📌 '+x.title+'（'+x.cat+'）\n'+whenLabel(x)+'\n見込み '+fmtDur(x.est)+(x.done?' ／ 完了':' ／ 残り '+fmtDur(x.remaining))+(newEv?'\n📅 予定にも入れました：'+evLabel(newEv):'');
+      sum=(ev?'✎ タスクに変えました':'✎ タスクを更新しました')+'\n📌 '+x.title+'（'+x.cat+'）\n'+whenLabel(x)+'\n'+progLabel(x)+(newEv?'\n📅 予定にも入れました：'+evLabel(newEv):'');
     }
     if(memo)sum+='\nメモ：'+memo;
     save();renderAll();renderSugs();
