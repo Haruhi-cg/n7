@@ -1203,6 +1203,13 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showView(b.data
 $('#send').onclick=()=>{const v=$('#inp').value;$('#inp').value='';handle(v);};
 $('#inp').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();$('#send').click();}});
 $('#inp').addEventListener('input',renderSugs);
+$('#inp').addEventListener('paste',e=>{
+  const t=(e.clipboardData||window.clipboardData).getData('text');
+  const lines=t.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  if(lines.length<2)return;
+  e.preventDefault();$('#inp').value='';
+  lines.forEach(l=>handle(l));
+});
 renderCats();renderSugs();renderLog();renderAll();tick();
 setInterval(()=>{tick();if($('#dayView').classList.contains('on'))renderDay();},30000);
 function receiveJobcan(){
