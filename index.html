@@ -909,7 +909,7 @@ function parseShifts(text,year,month){
   }
   const seen=new Set();return out.filter(x=>{const k=x.date+x.start+'-'+x.end;if(seen.has(k))return false;seen.add(k);return true;});
 }
-let shiftPreview=[];
+let shiftPreview=[],shiftRange=null;
 function shiftBoxHTML(){
   const st=S.settings,n=new Date();
   const ym=st.shiftYM||(n.getFullYear()+'-'+pad(n.getMonth()+1));
@@ -947,7 +947,8 @@ function drawShiftPreview(){
   $('#shAdd').onclick=()=>{
     const st=S.settings,pick=shiftPreview.filter(x=>x.on);if(!pick.length)return;
     snapshot=JSON.stringify({tasks:S.tasks,events:S.events});
-    const from=pick.reduce((a,x)=>x.date<a?x.date:a,pick[0].date),to=pick.reduce((a,x)=>x.date>a?x.date:a,pick[0].date);
+    let from=pick.reduce((a,x)=>x.date<a?x.date:a,pick[0].date),to=pick.reduce((a,x)=>x.date>a?x.date:a,pick[0].date);
+    if(shiftRange){if(shiftRange.from<from)from=shiftRange.from;if(shiftRange.to>to)to=shiftRange.to;}
     let removed=0;
     if(st.shiftReplace!==false){const before=S.events.length;S.events=S.events.filter(e=>!(e.source==='jobcan'&&e.date>=from&&e.date<=to));removed=before-S.events.length;}
     let added=0;
@@ -955,7 +956,7 @@ function drawShiftPreview(){
       if(S.events.some(e=>e.date===x.date&&e.start===x.start&&e.end===x.end&&e.title===st.shiftTitle))continue;
       S.events.push({id:uid(),title:st.shiftTitle||'バイト',cat:st.shiftCat||'バイト',date:x.date,start:x.start,end:x.end,place:st.shiftPlace||null,source:'jobcan'});added++;
     }
-    shiftPreview=[];$('#shIn').value='';
+    shiftPreview=[];shiftRange=null;$('#shIn').value='';
     addMsg('app','📅 ジョブカンのシフトを'+added+'件入れました（'+fmtDay(from)+'〜'+fmtDay(to)+'）'+(removed?'\n前に取り込んだ'+removed+'件は入れ替えました':''),true);
     save();renderAll();renderSugs();
     box.innerHTML='<div class="help" style="margin-top:8px">'+added+'件入れました。カレンダーで確認できます。</div>';
@@ -1204,6 +1205,22 @@ $('#inp').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.p
 $('#inp').addEventListener('input',renderSugs);
 renderCats();renderSugs();renderLog();renderAll();tick();
 setInterval(()=>{tick();if($('#dayView').classList.contains('on'))renderDay();},30000);
+function receiveJobcan(){
+  if(!location.hash.startsWith('#jc='))return;
+  let d;try{d=JSON.parse(decodeURIComponent(location.hash.slice(4)));}catch(e){d=null;}
+  history.replaceState(null,'',location.pathname+location.search);
+  if(!d||!Array.isArray(d.s))return;
+  shiftPreview=d.s.filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x.date)).map(x=>{
+    const s=toMin(x.start),e0=toMin(x.end);
+    return {date:x.date,start:s,end:e0>s?Math.min(e0,1440):1440,overnight:e0<=s||e0>1440,on:true};
+  });
+  shiftRange=d.from&&d.to?{from:d.from,to:d.to}:null;
+  showView('setView');renderSettings();drawShiftPreview();
+  const box=$('#shPrev');if(box)box.scrollIntoView({block:'start'});
+  addMsg('app','ジョブカンから'+shiftPreview.length+'件のシフトを受け取りました。設定の取り込み画面で確認して「この内容で入れる」を押してください。');save();
+}
+receiveJobcan();
+window.addEventListener('hashchange',receiveJobcan);
 syncNow();
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncNow();});
 window.addEventListener('online',()=>syncNow());
