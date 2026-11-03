@@ -979,7 +979,11 @@ function renderSettings(){
   html+='<h2>組み方</h2><div class="set"><label>1回の作業の上限（分）</label> <input type="number" step="5" min="10" id="mb" value="'+st.maxBlock+'" style="width:80px"><br><br>'
     +'<label>作業の間の休憩（分）</label> <input type="number" step="5" min="0" id="bk" value="'+st.brk+'" style="width:80px"><br><br>'
     +'<label>所要時間を書かなかったときの見込み（分）</label> <input type="number" step="5" min="5" id="de" value="'+st.defEst+'" style="width:80px"></div>';
-  html+='<h2>データ</h2><div class="set"><button class="btn" id="exp">書き出し（コピー）</button> <button class="btn" id="imp">読み込み</button> <button class="btn" id="clr">チャット履歴を消す</button></div>';
+  html+='<h2>データ</h2><div class="set shiftbox"><div class="help">別の端末や古い版へ移すときは、「書き出し」で出た文字を全部コピーし、移したい側の下の欄に貼って「読み込む」を押します。ファイルでも移せます。</div>'
+    +'<div class="acts" style="margin-top:8px;flex-wrap:wrap;display:flex;gap:6px"><button class="btn" id="exp">書き出し</button><button class="btn" id="expf">ファイルで保存</button><button class="btn" id="clr">チャット履歴を消す</button></div>'
+    +'<textarea id="ioTx" rows="5" placeholder="ここに書き出したデータを貼り付け"></textarea>'
+    +'<div class="acts" style="margin-top:8px;flex-wrap:wrap;display:flex;gap:6px;align-items:center"><button class="btn primary" id="imp">読み込む</button><label class="btn">ファイルから読み込む<input type="file" id="impf" accept=".json,.txt,application/json,text/plain" style="display:none"></label></div>'
+    +'<div class="help" id="ioMsg" style="margin-top:6px"></div></div>';
   html+='<h2>使い方</h2><div class="set help">'+esc(HELP).replace(/\n/g,'<br>')+'</div>';
   $('#setView').innerHTML=html;
   const V=$('#setView');
@@ -1003,8 +1007,27 @@ function renderSettings(){
   $('#mb').onchange=e=>{st.maxBlock=Math.max(10,+e.target.value);save();renderAll(true);};
   $('#bk').onchange=e=>{st.brk=Math.max(0,+e.target.value);save();renderAll(true);};
   $('#de').onchange=e=>{st.defEst=Math.max(5,+e.target.value);save();};
-  $('#exp').onclick=async()=>{const t=JSON.stringify(S);try{await navigator.clipboard.writeText(t);alert('コピーしました');}catch(e){prompt('コピーしてください',t);}};
-  $('#imp').onclick=()=>{const t=prompt('書き出したデータを貼り付けてください');if(!t)return;try{S=Object.assign(defaults(),JSON.parse(t));save();renderAll();alert('読み込みました');}catch(e){alert('読み込めませんでした');}};
+  const io=$('#ioTx'),msg=t=>$('#ioMsg').textContent=t;
+  $('#exp').onclick=async()=>{
+    io.value=JSON.stringify(S);io.focus();io.select();
+    try{await navigator.clipboard.writeText(io.value);msg('コピーしました（タスク'+S.tasks.length+'件・予定'+S.events.length+'件）。移したい側の欄に貼り付けてください。');}
+    catch(e){msg('欄の文字が全部選ばれています。コピーして、移したい側に貼り付けてください。');}
+  };
+  $('#expf').onclick=()=>{
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(S)],{type:'application/json'}));
+    a.download='chatschedule-'+dkey(new Date())+'.json';document.body.appendChild(a);a.click();a.remove();
+  };
+  const importText=t=>{
+    t=(t||'').trim();const a=t.indexOf('{'),b=t.lastIndexOf('}');
+    if(a<0||b<a)return msg('データが見つかりませんでした。書き出した文字を最初から最後まで全部貼り付けてください。');
+    let d;try{d=JSON.parse(t.slice(a,b+1));}catch(e){return msg('読み込めませんでした。文字が途中で切れている可能性があります。');}
+    if(!d||!Array.isArray(d.tasks))return msg('ChatScheduleのデータではないようです。');
+    if((S.tasks.length||S.events.length)&&!confirm('今入っているデータ（タスク'+S.tasks.length+'件・予定'+S.events.length+'件）を、読み込むデータに置き換えます。よいですか？'))return;
+    S=Object.assign(defaults(),d);save();applyTheme();renderCats();renderSugs();renderLog();renderAll();
+    msg('読み込みました（タスク'+S.tasks.length+'件・予定'+S.events.length+'件）');
+  };
+  $('#imp').onclick=()=>importText(io.value);
+  $('#impf').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(importText);};
   $('#clr').onclick=()=>{if(confirm('チャット履歴を消しますか？（タスクは残ります）')){S.chat=[];save();renderLog();}};
 }
 function renderAll(keepSettings){renderTasks();renderDay();if(!keepSettings)renderSettings();}
