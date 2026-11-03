@@ -1107,7 +1107,7 @@ function applyRemote(r){
 async function exchange(changes){
   const c=syncCfg();if(!c)throw new Error('nokey');
   const res=await fetch(c.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify({token:c.token,since:SY.since,changes})});
+    body:JSON.stringify({token:c.token,since:SY.since,changes,inbox:true})});
   const j=await res.json();
   if(!j.ok)throw new Error(j.err||'ng');
   let touched=false;
@@ -1121,9 +1121,10 @@ async function exchange(changes){
     SY.meta[r.k]={h:r.d?null:hashStr(JSON.stringify(r.v)),u:r.u,del:r.d?1:0};
   }
   SY.since=j.now;saveSY();
+  (j.inbox||[]).forEach(t=>inboxQueue.push(t));
   return touched;
 }
-let syncing=false,syncAgain=false,syncTimer=null;
+let syncing=false,syncAgain=false,syncTimer=null,inboxQueue=[];
 function syncSoon(){if(!syncCfg()||applyingRemote)return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>syncNow(),1500);}
 let applyingRemote=false;
 async function syncNow(manual){
@@ -1152,6 +1153,10 @@ async function syncNow(manual){
     setSyncMsg(SY.err);
   }finally{
     applyingRemote=false;syncing=false;
+    if(inboxQueue.length){
+      const lines=inboxQueue.splice(0).join('\n').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+      if(lines.length){addMsg('app','壁打ちから'+lines.length+'件届きました。順に入れます。');lines.forEach(l=>handle(l));}
+    }
     if(syncAgain){syncAgain=false;syncSoon();}
   }
 }
