@@ -510,7 +510,7 @@ function handle(raw){
   if(/^(使い方|ヘルプ|help|\?)$/i.test(raw)){addMsg('app',HELP);return finish();}
   if(/^(シフト|シフト取り込み|ジョブカン)$/.test(raw)){showView('setView');$('#setView').scrollTop=0;setTimeout(()=>$('#shIn').focus(),50);addMsg('app','設定の「ジョブカンのシフト取り込み」を開きました。');return finish();}
   if(/^(今日|予定|明日|カレンダー)$/.test(raw)){calMode='day';calDate=addDays(new Date(new Date().setHours(0,0,0,0)),raw==='明日'?1:0);showView('dayView');renderDay();addMsg('app','カレンダーを開きました。');return finish();}
-  snapshot=JSON.stringify({tasks:S.tasks,events:S.events});
+  snapshot=JSON.stringify({tasks:S.tasks,events:S.events,routineOv:S.routineOv||[],routines:S.routines});
   const recM=raw.match(/^記録(?:[\s　:：]+(.*))?$/);
   if(recM){
     const p=parse(recM[1]||'',now);
@@ -537,6 +537,11 @@ function handle(raw){
       if(tg.log)tg.log.push({t:now.toISOString(),x:'内容変更：'+old+' → '+tg.title});
       addMsg('app','✎ 内容を変えました\n'+old+' → '+tg.title,true,refOf(tg));return finish();
     }
+  }
+  const rt=findRoutine(raw),rtTask=findTask(raw);
+  if(rt&&!(rtTask&&rtTask.title.length>=rt.title.length)){
+    const r=applyToRoutine(rt,raw,now);
+    if(r){addMsg('app',r+movedText(replanAll()),true);return finish();}
   }
   const subM=raw.match(/^(.+?)\s*[>＞]\s*(.+)$/);
   if(subM){
@@ -671,6 +676,13 @@ const HELP=`■ 言葉
 ・期限・優先度を書かないサブタスクは親のものに従う
 ・あとから変えるときも同じ形：レポート > 資料集め 完了
 
+■ ルーティン（設定のルーティンの名前で送る）
+・風呂 21時まで（その日だけ、21時に終わるようにずらす）
+・風呂 20:30-21:00 ／ 風呂 20時（その日だけ時刻を変える）
+・風呂 明日 22時まで（日付を書くとその日）
+・風呂 今日なし ／ 風呂 いつも通り（その日はなし／元に戻す）
+・風呂 毎日 21時まで（これから毎回の時刻を変える）
+
 ■ すでにあるものを変える（内容のあとに書く）
 ・レポート 完了 ／ レポート 削除
 ・レポート 来週月曜まで ／ レポート 期限なし（期限）
@@ -696,15 +708,52 @@ const HELP=`■ 言葉
 ・割り当てが全部過ぎても未完了のタスクは、24時間たつとリストの上に出ます`;
 
 
+function routineInst(r,k){
+  const ov=(S.routineOv||[]).find(o=>o.rid===r.id&&o.date===k);
+  if(ov)return ov.skip?null:{s:ov.start,e:ov.end,ov:true};
+  if(!r.days.includes(fromKey(k).getDay()))return null;
+  return {s:toMin(r.start),e:toMin(r.end)};
+}
+function findRoutine(text){
+  let best=null;
+  for(const r of S.routines){if(!r.title||!text.startsWith(r.title))continue;const rest=text.slice(r.title.length);
+    if(rest&&!/^([\s　0-9０-９]|今日|明日|明後日|あさって|毎日|いつも|なし|休み|戻す|元に|午前|午後|来週|[月火水木金土日]曜)/.test(rest))continue;
+    if(!best||r.title.length>best.title.length)best=r;}
+  return best;
+}
+function rLen(r){const s=toMin(r.start),e=toMin(r.end);return ((e-s)+1440)%1440||1440;}
+function setRoutineOv(r,k,o){
+  S.routineOv=(S.routineOv||[]).filter(x=>!(x.rid===r.id&&x.date===k)&&x.date>=dkey(addDays(new Date(),-7)));
+  if(o)S.routineOv.push(Object.assign({rid:r.id,date:k},o));
+}
+function applyToRoutine(r,raw,now){
+  const rest=raw.slice(r.title.length);
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const always=/毎日|いつも(?!通り|どおり)/.test(rest);
+  const p=parse(rest.replace(/毎日|いつも(?!通り|どおり)/g,' '),now);
+  const date=p.date||today,k=dkey(date),label=always?'これから毎回':fmtDay(k)+'だけ';
+  const len=p.dur||rLen(r);
+  if(/いつも通り|いつもどおり|元に戻す|戻す/.test(rest)){setRoutineOv(r,k,null);return '🔁 ルーティン「'+r.title+'」の'+fmtDay(k)+'をいつも通りに戻しました（'+r.start+'–'+r.end+'）';}
+  if(p.cancel||/なし|休み|やらない|スキップ/.test(rest)){
+    if(always)return 'ルーティンをやめるときは、設定の「ルーティン」から削除してください。';
+    setRoutineOv(r,k,{skip:true});return '🔁 ルーティン「'+r.title+'」を'+fmtDay(k)+'はなしにしました';}
+  let st,en;
+  if(p.tStart!=null){st=p.tStart;en=p.tEnd;}
+  else if(p.t!=null&&p.until){en=p.t;st=((p.t-len)%1440+1440)%1440;}
+  else if(p.t!=null){st=p.t;en=(p.t+len)%1440||1440;}
+  else if(p.dur){st=routineInst(r,k)?routineInst(r,k).s:toMin(r.start);en=(st+len)%1440||1440;}
+  else return null;
+  if(always){r.start=hm(st);r.end=hm(en%1440);}
+  else setRoutineOv(r,k,{start:st,end:en});
+  return '🔁 ルーティン「'+r.title+'」を'+label+' '+hm(st)+'–'+hm(en)+(en<=st?'（翌日）':'')+' にしました';
+}
 function busyFor(d){
   const k=dkey(d),wd=d.getDay(),prev=(wd+6)%7,out=[];
+  const pk=dkey(addDays(d,-1));
   for(const r of S.routines){
-    const s=toMin(r.start),e=toMin(r.end);
-    if(e>s){ if(r.days.includes(wd))out.push({type:'routine',title:r.title,s,e}); }
-    else{
-      if(r.days.includes(wd))out.push({type:'routine',title:r.title,s,e:1440});
-      if(r.days.includes(prev)&&e>0)out.push({type:'routine',title:r.title,s:0,e});
-    }
+    const a=routineInst(r,k),b=routineInst(r,pk);
+    if(a){const t=r.title+(a.ov?'（この日だけ変更）':'');if(a.e>a.s)out.push({type:'routine',title:t,s:a.s,e:a.e});else out.push({type:'routine',title:t,s:a.s,e:1440});}
+    if(b&&b.e<=b.s&&b.e>0)out.push({type:'routine',title:r.title+(b.ov?'（この日だけ変更）':''),s:0,e:b.e});
   }
   for(const ev of S.events.filter(e=>e.date===k)){
     const pl=ev.place?placeOf(ev.place):null,tr=pl?+pl.travel||0:0;
@@ -781,7 +830,7 @@ function renderLog(){
   L.scrollTop=L.scrollHeight;
 }
 function undo(){
-  if(!snapshot)return;const s=JSON.parse(snapshot);S.tasks=s.tasks;S.events=s.events;snapshot=null;
+  if(!snapshot)return;const s=JSON.parse(snapshot);S.tasks=s.tasks;S.events=s.events;if(s.routineOv)S.routineOv=s.routineOv;if(s.routines)S.routines=s.routines;snapshot=null;
   addMsg('app','↩︎ 直前の操作を取り消しました');save();renderAll();
 }
 function renderCats(){
@@ -1359,7 +1408,7 @@ function backfillRefs(){
 
 const SYNC_KEY='cs.sync';
 const SYNC_TYPES=['t','e','c'];
-const KV_KEYS=['cats','catHue','catHueV2','routines','places','settings','history'];
+const KV_KEYS=['cats','catHue','catHueV2','routines','places','settings','history','routineOv'];
 let SY=(()=>{try{return JSON.parse(localStorage.getItem(SYNC_KEY))||{};}catch(e){return {};}})();
 SY.meta=SY.meta||{};SY.since=SY.since||0;
 function saveSY(){try{localStorage.setItem(SYNC_KEY,JSON.stringify(SY));}catch(e){}}
