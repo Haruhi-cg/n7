@@ -171,7 +171,7 @@ h2{font-size:14px;color:var(--sub);margin:16px 0 6px;font-weight:600}
 .dlmark span{position:absolute;right:1px;top:-12px;font-size:9px;line-height:11px;background:var(--bg);color:var(--c);padding:0 2px;border-radius:3px;max-width:100%;overflow:hidden;white-space:nowrap}
 .blk.b-dl{grid-template-columns:96px 1fr;padding:4px 10px;border-top:2px solid var(--c);border-radius:0;color:var(--ink)}
 .subadd{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
-.lifeck{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--sub);width:100%;padding-left:2px}
+.mv{display:flex;gap:4px;width:64px;flex:none}.mv button{width:28px;height:28px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;font-size:11px;padding:0}.mv button:disabled{opacity:.3}.mv .sm{font-size:11px;color:var(--sub)}
 
 
 .set{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:6px 0}
@@ -238,7 +238,6 @@ function defaults(){
       {id:uid(),title:'風呂',days:[0,1,2,3,4,5,6],start:'22:00',end:'22:30'}
     ],
     places:[{name:'大学',travel:0},{name:'バイト',travel:0}],
-    lifeCats:['家事','生活'],
     settings:{maxBlock:60,brk:5,defEst:30,theme:'dark'}
   };
 }
@@ -350,12 +349,10 @@ function childrenOf(t){return S.tasks.filter(x=>x.parentId===t.id).sort((a,b)=>S
 function hasKids(t){return S.tasks.some(x=>x.parentId===t.id);}
 function effPrio(t){const p=parentOf(t);return t.prio||(p&&p.prio)||'mid';}
 function effDeadline(t){const p=parentOf(t);return t.deadline||(p&&p.deadline)||null;}
-function isLife(t){return (S.lifeCats||[]).includes(t.cat);}
 function catRank(c){const i=S.cats.indexOf(c);return i<0?999:i;}
 function slotTitle(t){const p=parentOf(t);return p?p.title+'：'+t.title:t.title;}
 function cmpTasks(a,b){
-  const la=isLife(a)?0:1,lb=isLife(b)?0:1;if(la!==lb)return la-lb;
-  if(la){const d=PRIO[effPrio(a)]-PRIO[effPrio(b)];if(d)return d;}
+  const d0=PRIO[effPrio(a)]-PRIO[effPrio(b)];if(d0)return d0;
   const da=effDeadline(a),db=effDeadline(b);
   if(da!==db){if(!da)return 1;if(!db)return -1;const x=new Date(da)-new Date(db);if(x)return x;}
   const c=catRank(a.cat)-catRank(b.cat);if(c)return c;
@@ -453,7 +450,7 @@ function whenLabel(t){
   const p=parentOf(t);if(p&&p.deadline)return '期限 '+fmtDL(p)+'まで（親タスクと同じ）';
   return '期限なし';
 }
-function prioLabel(t){return '優先度 '+PRIO_JA[effPrio(t)]+(isLife(t)?'（生活系）':'');}
+function prioLabel(t){return '優先度 '+PRIO_JA[effPrio(t)];}
 function topTask(text){
   let best=null;
   for(const t of S.tasks.filter(t=>!t.done&&!t.parentId)){if(text.includes(t.title)&&(!best||t.title.length>best.title.length))best=t;}
@@ -684,9 +681,9 @@ const HELP=`■ 言葉
 ・映画 18:30-21:00 ／ 映画 土曜 ／ 映画 削除（予定）
 
 ■ 優先順位（何かを入れたり変えたりするたびに組み直す）
-1. 生活系のカテゴリ（設定で選ぶ）は期限順に先に入れる
-2. ほかは 優先度（#高 > #中 > #低。書かないと中）
-3. → 期限が近い順 → 設定のカテゴリの並び順
+1. 優先度（#高 > #中 > #低。書かないと中）
+2. → 期限が近い順
+3. → カテゴリの順番（設定で並べ替え。上ほど優先）
 始まっている割り当てと、時間の過ぎた割り当ては動かしません。
 
 ■ そのほか
@@ -979,7 +976,7 @@ function renderTasks(){
   const cats=Object.keys(groups).sort((a,b)=>catRank(a)-catRank(b));
   cats.forEach(c=>{
     groups[c].sort(cmpTasks);
-    html+='<h2'+cv(c)+'><span class="dot"></span>'+esc(c)+'（'+groups[c].length+'）'+((S.lifeCats||[]).includes(c)?' <span class="sm">生活系</span>':'')+'</h2>'+groups[c].map(card).join('');
+    html+='<h2'+cv(c)+'><span class="dot"></span>'+esc(c)+'（'+groups[c].length+'）'+'</h2>'+groups[c].map(card).join('');
   });
   if(!act.length)html+='<div class="empty">進行中のタスクはありません</div>';
   const evs=S.events.filter(e=>!e.rec&&!e.auto&&e.date>=dkey(new Date())).sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start);
@@ -1264,11 +1261,10 @@ function renderSettings(){
     +'<div class="days">'+WD.map((w,i)=>'<button class="'+(r.days.includes(i)?'on':'')+'" data-d="'+i+'">'+w+'</button>').join('')+'</div>'
     +'<div class="row"><input type="time" step="300" value="'+r.start+'" data-f="start"><span style="align-self:center">〜</span><input type="time" step="300" value="'+r.end+'" data-f="end"></div></div>').join('');
   html+='<button class="btn primary" id="radd">＋ ルーティンを追加</button>';
-  html+='<h2>カテゴリ（読点区切り・左から優先）</h2><div class="set"><input type="text" id="catsIn" style="width:100%" value="'+esc(S.cats.join('、'))+'">'
-    +[...S.cats,'未分類'].map(c=>'<div class="crow"><span class="cn"><span class="dot" style="background:'+catColor(c)+'"></span>'+esc(c)+'</span><div class="sw">'
-      +HUES.map(x=>'<button title="'+x.n+'" data-cc="'+esc(c)+'" data-h="'+(x.h==null?'':x.h)+'" class="'+(catHue(c)===x.h?'on':'')+'" style="background:'+hueColor(x.h)+'"></button>').join('')+'</div>'
-      +'<label class="lifeck"><input type="checkbox" data-life="'+esc(c)+'"'+((S.lifeCats||[]).includes(c)?' checked':'')+'> 生活系</label></div>').join('')
-    +'<div class="help">色見本を押すと、そのカテゴリの色が変わります。<br>カレンダーに組む順番は「優先度 → 期限 → この並び順」。<br>「生活系」にしたカテゴリのタスクは、優先度に関係なく期限順に先に入れます。</div></div>';
+  html+='<h2>カテゴリ（上ほど優先）</h2><div class="set"><div class="help">カテゴリの追加・削除・名前の変更（読点区切り）</div><input type="text" id="catsIn" style="width:100%" value="'+esc(S.cats.join('、'))+'">'
+    +[...S.cats,'未分類'].map((c,i)=>'<div class="crow">'+(c==='未分類'?'<span class="mv"><span class="sm">いつも最後</span></span>':'<span class="mv"><button data-mv="'+i+'" data-d="-1"'+(i===0?' disabled':'')+'>▲</button><button data-mv="'+i+'" data-d="1"'+(i===S.cats.length-1?' disabled':'')+'>▼</button></span>')+'<span class="cn"><span class="dot" style="background:'+catColor(c)+'"></span>'+esc(c)+'</span><div class="sw">'
+      +HUES.map(x=>'<button title="'+x.n+'" data-cc="'+esc(c)+'" data-h="'+(x.h==null?'':x.h)+'" class="'+(catHue(c)===x.h?'on':'')+'" style="background:'+hueColor(x.h)+'"></button>').join('')+'</div></div>').join('')
+    +'<div class="help">色見本を押すと、そのカテゴリの色が変わります。<br>▲▼で並べ替えると、上のカテゴリほど優先になります。カレンダーに組む順番は「優先度 → 期限 → カテゴリの順番」です。</div></div>';
   html+='<h2>画面の色</h2><div class="set"><div class="seg2">'+[['dark','黒地'],['light','白地']].map(x=>'<button data-th="'+x[0]+'" class="'+((S.settings.theme||'dark')===x[0]?'on':'')+'">'+x[1]+'</button>').join('')+'</div></div>';
   html+='<h2>場所と移動時間（家から・片道の分）</h2><div class="help">予定に「@大学」と付けるか、予定名に場所名が入っていると、前後に移動時間を確保します。0なら確保しません。</div>'
     +S.places.map((p,i)=>'<div class="set row" data-p="'+i+'"><input type="text" value="'+esc(p.name)+'" data-f="name" style="flex:1"><input type="number" min="0" step="5" value="'+p.travel+'" data-f="travel" style="width:80px"><span style="align-self:center">分</span><button class="btn" data-a="pdel">削除</button></div>').join('')
@@ -1293,7 +1289,7 @@ function renderSettings(){
   });
   $('#radd').onclick=()=>{S.routines.push({id:uid(),title:'新しいルーティン',days:[1,2,3,4,5],start:'09:00',end:'10:00'});save();renderAll();};
   $('#catsIn').onchange=e=>{S.cats=e.target.value.split(/[、,]/).map(s=>s.trim()).filter(Boolean);save();renderCats();renderSettings();};
-  V.querySelectorAll('[data-life]').forEach(b=>b.onchange=()=>{const c=b.dataset.life;S.lifeCats=(S.lifeCats||[]).filter(x=>x!==c);if(b.checked)S.lifeCats.push(c);replanAll();save();renderAll(true);});
+  V.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>{const i=+b.dataset.mv,j=i+(+b.dataset.d);if(j<0||j>=S.cats.length)return;[S.cats[i],S.cats[j]]=[S.cats[j],S.cats[i]];replanAll();save();renderCats();renderAll();});
   $('#catsIn').addEventListener('change',()=>{replanAll();save();renderAll(true);});
   V.querySelectorAll('[data-cc]').forEach(b=>b.onclick=()=>{S.catHue[b.dataset.cc]=b.dataset.h===''?null:+b.dataset.h;save();renderAll();renderCats();renderSugs();});
   V.querySelectorAll('[data-th]').forEach(b=>b.onclick=()=>{S.settings.theme=b.dataset.th;save();applyTheme();renderSettings();});
@@ -1363,7 +1359,7 @@ function backfillRefs(){
 
 const SYNC_KEY='cs.sync';
 const SYNC_TYPES=['t','e','c'];
-const KV_KEYS=['cats','catHue','catHueV2','routines','places','settings','history','lifeCats'];
+const KV_KEYS=['cats','catHue','catHueV2','routines','places','settings','history'];
 let SY=(()=>{try{return JSON.parse(localStorage.getItem(SYNC_KEY))||{};}catch(e){return {};}})();
 SY.meta=SY.meta||{};SY.since=SY.since||0;
 function saveSY(){try{localStorage.setItem(SYNC_KEY,JSON.stringify(SY));}catch(e){}}
