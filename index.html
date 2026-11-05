@@ -181,7 +181,13 @@ h2{font-size:14px;color:var(--sub);margin:16px 0 6px;font-weight:600}
 .days button{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--bg);color:var(--sub);font-family:inherit;font-size:12px}
 .days button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .crow{display:flex;align-items:center;gap:8px;margin:10px 0;flex-wrap:wrap}
-.crow .cn{width:72px;font-size:14px;display:flex;align-items:center}
+.crow .grip{width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--sub);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;flex:none}.crow .grip.off{cursor:default}
+.crow .sm{font-size:11px;color:var(--sub);margin-left:4px;white-space:nowrap}
+.crow .lbl{margin-left:auto;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;font-size:12px;padding:4px 10px}.crow .lbl.on{border-color:var(--ink)}
+.crow .sw{width:100%;padding-left:40px}
+.crow.drag{position:fixed;z-index:50;margin:0;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.35)}
+.crow.ph{border:1px dashed var(--line);border-radius:10px}
+.crow .cn{min-width:72px;font-size:14px;display:flex;align-items:center}
 .crow .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;flex:none}
 .sw{display:flex;gap:6px;flex-wrap:wrap}
 .sw button{width:22px;height:22px;border-radius:50%;border:2px solid transparent;padding:0}
@@ -1303,6 +1309,36 @@ function drawShiftPreview(){
     box.innerHTML='<div class="help" style="margin-top:8px">'+added+'件入れました。カレンダーで確認できます。</div>';
   };
 }
+let openLabel=null;
+function bindCatDrag(g){
+  g.addEventListener('pointerdown',e=>{
+    e.preventDefault();
+    const row=g.closest('.crow'),box=$('#crows'),from=+g.dataset.grip;
+    const rows=()=>[...box.querySelectorAll('.crow:not(.fixed)')];
+    const fixed=box.querySelector('.crow.fixed');
+    const r0=row.getBoundingClientRect(),y0=e.clientY;
+    const ph=document.createElement('div');ph.className='crow ph';ph.style.height=r0.height+'px';
+    row.parentNode.insertBefore(ph,row);
+    row.classList.add('drag');row.style.width=r0.width+'px';row.style.top=r0.top+'px';row.style.left=r0.left+'px';
+    try{g.setPointerCapture(e.pointerId);}catch(_){}
+    const move=ev=>{
+      const y=ev.clientY;row.style.top=(r0.top+y-y0)+'px';
+      const others=rows().filter(x=>x!==row&&x!==ph);
+      let before=fixed;
+      for(const o of others){const b=o.getBoundingClientRect();if(y<b.top+b.height/2){before=o;break;}}
+      if(ph.nextSibling!==before)box.insertBefore(ph,before);
+    };
+    const up=()=>{
+      g.removeEventListener('pointermove',move);g.removeEventListener('pointerup',up);g.removeEventListener('pointercancel',up);
+      const list=rows().filter(x=>x!==row);
+      const to=list.indexOf(ph);
+      ph.remove();
+      if(to>=0&&to!==from){const c=S.cats.splice(from,1)[0];S.cats.splice(to,0,c);replanAll();save();renderCats();renderAll();}
+      else renderSettings();
+    };
+    g.addEventListener('pointermove',move);g.addEventListener('pointerup',up);g.addEventListener('pointercancel',up);
+  });
+}
 function renderSettings(){
   const st=S.settings;
   let html=syncBoxHTML()+shiftBoxHTML()+'<h2>ルーティン（毎回入力しなくても予定に入るもの）</h2>';
@@ -1311,9 +1347,9 @@ function renderSettings(){
     +'<div class="row"><input type="time" step="300" value="'+r.start+'" data-f="start"><span style="align-self:center">〜</span><input type="time" step="300" value="'+r.end+'" data-f="end"></div></div>').join('');
   html+='<button class="btn primary" id="radd">＋ ルーティンを追加</button>';
   html+='<h2>カテゴリ（上ほど優先）</h2><div class="set"><div class="help">カテゴリの追加・削除・名前の変更（読点区切り）</div><input type="text" id="catsIn" style="width:100%" value="'+esc(S.cats.join('、'))+'">'
-    +[...S.cats,'未分類'].map((c,i)=>'<div class="crow">'+(c==='未分類'?'<span class="mv"><span class="sm">いつも最後</span></span>':'<span class="mv"><button data-mv="'+i+'" data-d="-1"'+(i===0?' disabled':'')+'>▲</button><button data-mv="'+i+'" data-d="1"'+(i===S.cats.length-1?' disabled':'')+'>▼</button></span>')+'<span class="cn"><span class="dot" style="background:'+catColor(c)+'"></span>'+esc(c)+'</span><div class="sw">'
-      +HUES.map(x=>'<button title="'+x.n+'" data-cc="'+esc(c)+'" data-h="'+(x.h==null?'':x.h)+'" class="'+(catHue(c)===x.h?'on':'')+'" style="background:'+hueColor(x.h)+'"></button>').join('')+'</div></div>').join('')
-    +'<div class="help">色見本を押すと、そのカテゴリの色が変わります。<br>▲▼で並べ替えると、上のカテゴリほど優先になります。カレンダーに組む順番は「優先度 → 期限 → カテゴリの順番」です。</div></div>';
+    +'<div id="crows">'+[...S.cats,'未分類'].map((c,i)=>'<div class="crow'+(c==='未分類'?' fixed':'')+'" data-ci="'+i+'">'+(c==='未分類'?'<span class="grip off">　</span>':'<span class="grip" data-grip="'+i+'">≡</span>')+'<span class="cn"><span class="dot" style="background:'+catColor(c)+'"></span>'+esc(c)+(c==='未分類'?'<span class="sm">（いつも最後）</span>':'')+'</span><button class="lbl'+(openLabel===c?' on':'')+'" data-lbl="'+esc(c)+'">ラベル</button>'
+      +(openLabel===c?'<div class="sw">'+HUES.map(x=>'<button title="'+x.n+'" data-cc="'+esc(c)+'" data-h="'+(x.h==null?'':x.h)+'" class="'+(catHue(c)===x.h?'on':'')+'" style="background:'+hueColor(x.h)+'"></button>').join('')+'</div>':'')+'</div>').join('')+'</div>'
+    +'<div class="help">左の「≡」をつかんで上下に動かすと並べ替えられます。上のカテゴリほど優先です（組む順番は「優先度 → 期限 → カテゴリの順番」）。<br>色を変えるときは「ラベル」を押します。</div></div>';
   html+='<h2>画面の色</h2><div class="set"><div class="seg2">'+[['dark','黒地'],['light','白地']].map(x=>'<button data-th="'+x[0]+'" class="'+((S.settings.theme||'dark')===x[0]?'on':'')+'">'+x[1]+'</button>').join('')+'</div></div>';
   html+='<h2>場所と移動時間（家から・片道の分）</h2><div class="help">予定に「@大学」と付けるか、予定名に場所名が入っていると、前後に移動時間を確保します。0なら確保しません。</div>'
     +S.places.map((p,i)=>'<div class="set row" data-p="'+i+'"><input type="text" value="'+esc(p.name)+'" data-f="name" style="flex:1"><input type="number" min="0" step="5" value="'+p.travel+'" data-f="travel" style="width:80px"><span style="align-self:center">分</span><button class="btn" data-a="pdel">削除</button></div>').join('')
@@ -1338,7 +1374,8 @@ function renderSettings(){
   });
   $('#radd').onclick=()=>{S.routines.push({id:uid(),title:'新しいルーティン',days:[1,2,3,4,5],start:'09:00',end:'10:00'});save();renderAll();};
   $('#catsIn').onchange=e=>{S.cats=e.target.value.split(/[、,]/).map(s=>s.trim()).filter(Boolean);save();renderCats();renderSettings();};
-  V.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>{const i=+b.dataset.mv,j=i+(+b.dataset.d);if(j<0||j>=S.cats.length)return;[S.cats[i],S.cats[j]]=[S.cats[j],S.cats[i]];replanAll();save();renderCats();renderAll();});
+  V.querySelectorAll('[data-lbl]').forEach(b=>b.onclick=()=>{openLabel=openLabel===b.dataset.lbl?null:b.dataset.lbl;renderSettings();});
+  V.querySelectorAll('[data-grip]').forEach(g=>bindCatDrag(g));
   $('#catsIn').addEventListener('change',()=>{replanAll();save();renderAll(true);});
   V.querySelectorAll('[data-cc]').forEach(b=>b.onclick=()=>{S.catHue[b.dataset.cc]=b.dataset.h===''?null:+b.dataset.h;save();renderAll();renderCats();renderSugs();});
   V.querySelectorAll('[data-th]').forEach(b=>b.onclick=()=>{S.settings.theme=b.dataset.th;save();applyTheme();renderSettings();});
