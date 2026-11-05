@@ -142,6 +142,7 @@ h2{font-size:14px;color:var(--sub);margin:16px 0 6px;font-weight:600}
 .card .nm{font-weight:600;font-size:15px}
 .card[style*="--c"]{border-left:4px solid var(--c)}
 .card .meta{font-size:12px;color:var(--sub);margin-top:3px}
+.card .meta.unal{color:var(--ink);font-weight:600}
 .bar{height:6px;background:var(--gray-soft);border-radius:3px;margin-top:8px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--c,var(--ink))}
 .card .acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
@@ -430,6 +431,7 @@ function removeTask(t){
   S.events=S.events.filter(e=>!(ids.includes(e.taskId)&&e.auto));
   syncParent(parentOf(t));
 }
+function isAllocated(t){const n=new Date();return S.events.some(e=>e.taskId===t.id&&e.auto&&evEndDate(e)>n)||!!effWin(t);}
 function wantAlloc(t){if(hasKids(t))childrenOf(t).filter(k=>!k.done).forEach(k=>k.pendingAlloc=true);else t.pendingAlloc=true;}
 function manualFuture(t){const n=new Date(),k=dkey(n),nm=n.getHours()*60+n.getMinutes();
   return S.events.filter(e=>e.taskId===t.id&&!e.auto&&evEndDate(e)>n).reduce((a,e)=>a+e.end-(e.date===k?Math.max(e.start,nm):e.start),0);}
@@ -479,6 +481,7 @@ function allocText(t){
   if(hasKids(t))return childrenOf(t).filter(k=>!k.done).map(k=>'・'+k.title+'：'+allocText(k).replace(/^割り当て：/,'')).join('\n');
   const all=futureSlots(t);
   const w=effWin(t);
+  if(!all.length&&!w&&!t.allocShort)return '未割当（時刻や範囲を指定していないので、自動ではカレンダーに置きません）';
   if(!all.length)return (t.allocShort?'まとまった'+fmtDur(t.allocShort)+'の空きが'+(w?'割り当てる範囲（'+winLabel(w)+'）に':'')+'見つかりませんでした':(w?'割り当てる範囲（'+winLabel(w)+'）に':'割り当てられる')+'空きがありませんでした');
   const dl=effDeadline(t);
   const late=dl&&all.some(e=>evEndDate(e)>new Date(dl));
@@ -489,7 +492,7 @@ function allocText(t){
 function needsAlloc(t){
   if(t.done||hasKids(t)||futureSlots(t).length)return false;
   const last=lastSlotEnd(t);
-  if(!last)return true;
+  if(!last)return false;
   return Date.now()-last.getTime()>=24*3600*1000;
 }
 function whenLabel(t){
@@ -513,8 +516,8 @@ function newTaskFrom(p,raw,now,extra){
     deadline=dt.toISOString();
   }
   const t=Object.assign({id:uid(),title:p.title,cat:p.cat||selCat||'未分類',deadline,dlNoTime,prio:p.prio||null,est:p.dur||S.settings.defEst,estGuess:!p.dur,
-    done:false,created:now.toISOString(),log:[{t:now.toISOString(),x:'登録：'+raw}],pendingAlloc:true},p.win?{win:winFrom(p,now)}:{},extra||{});
-  S.tasks.push(t);return t;
+    done:false,created:now.toISOString(),log:[{t:now.toISOString(),x:'登録：'+raw}],pendingAlloc:false},p.win?{win:winFrom(p,now)}:{},extra||{});
+  S.tasks.push(t);t.pendingAlloc=!!effWin(t);return t;
 }
 function atTime(date,min){const d=new Date(date);d.setHours(0,0,0,0);d.setMinutes(min);return d;}
 function findTask(text){
@@ -688,10 +691,15 @@ function applyToTask(t,p,now,raw,noPlan){
   if((p.pct!=null&&p.pct<100)||p.spent!=null||p.left!=null)
     return '進み具合や作業した時間は、タスクには付けない形にしました。\n終わったら「'+t.title+' 完了」、やったことは「記録 30分 '+t.title+'」のように送ってください。';
   if(kids&&p.dur!=null)return '「'+t.title+'」にはサブタスクがあるので、確保時間はサブタスクごとに決めます。\n例：'+childrenOf(t)[0].title+' 1時間';
+  if(/(割り?当て|わりあて)\s*(を)?\s*(外す|はずす|解除|なし|やめる)/.test(raw)){
+    if(hasKids(t))childrenOf(t).forEach(k=>{dropFutureAuto(k);k.allocShort=0;k.pendingAlloc=false;});
+    dropFutureAuto(t);t.allocShort=0;t.pendingAlloc=false;t.log.push({t:nowS,x:'割り当てを外した'});
+    return '🗓 「'+slotTitle(t)+'」の割り当てを外しました（未割当）'+'';
+  }
   let realloc=/割り?当て|わりあて/.test(raw);
   if(p.pct!=null){markDone(t,nowS);out.push('完了'+(kids?'（サブタスクも全部）':''));realloc=false;}
-  if(p.dur!=null){t.est=p.dur;t.estGuess=false;realloc=true;out.push('確保時間 '+fmtDur(p.dur));}
-  if(realloc&&!t.done){wantAlloc(t);if(p.dur==null)out.push('割り当て直し');}
+  if(p.dur!=null){t.est=p.dur;t.estGuess=false;if(isAllocated(t))realloc=true;out.push('確保時間 '+fmtDur(p.dur));}
+  if(realloc&&!t.done){wantAlloc(t);if(p.dur==null)out.push('割り当て');}
   if(p.win){t.win=winFrom(p,now);if(!t.done)wantAlloc(t);out.push('割り当てる範囲 '+winLabel(t.win));}
   if(p.noWin&&t.win){delete t.win;if(!t.done)wantAlloc(t);out.push('割り当てる範囲なし');}
   if(!p.win&&(p.date||p.t!=null)){
@@ -730,6 +738,7 @@ const HELP=`■ 言葉
 
 ■ 新しく入れる（4種類）
 📌 タスク … 内容＋確保時間。期限・優先度・カテゴリは付けても付けなくてもいい
+　時刻や範囲を書かないタスクは、カレンダーに置かず「未割当」のままリストに入る
 　例：金曜17時までにレポート 2時間 #高 #学校
 　例：明日 銀行で振込 15分 #手続き
 　例：部屋の片付け 1時間（期限なし・確保時間を書かないと30分）
@@ -766,12 +775,12 @@ const HELP=`■ 言葉
 ・レポート 完了 ／ レポート 削除
 ・レポート 来週月曜まで ／ レポート 期限なし（期限）
 ・レポート 3時間（確保時間）／ レポート #高（優先度）／ レポート #学校（カテゴリ）
-・レポート 割り当て直す（今から先の空きに置き直す）
+・レポート 割り当てる（今から先の空きに置く）／ レポート 割り当てを外す（未割当に戻す）
 ・レポート 明日 14:00-16:00（タスクを残したまま予定にも入れる）
 ・レポート → 卒論レポート（内容）
 ・映画 18:30-21:00 ／ 映画 土曜 ／ 映画 削除（予定）
 
-■ 優先順位（何かを入れたり変えたりするたびに組み直す）
+■ 優先順位（割り当てたタスクを、何かを入れたり変えたりするたびに組み直す）
 1. 優先度（#高 > #中 > #低。書かないと中）
 2. → 期限が近い順
 3. → カテゴリの順番（設定で並べ替え。上ほど優先）
@@ -1104,8 +1113,8 @@ function renderTasks(){
     +(t.win&&!t.done?'<div class="meta">割り当てる範囲：'+winLabel(t.win)+'</div>':'')
     +(t.memo?'<div class="memo">'+esc(t.memo)+'</div>':'')
     +(!t.done&&!kids.length&&fs.length?'<div class="meta">割り当て：'+fs.map(evLabel).join('、')+'</div>':'')
-    +(!t.done&&!kids.length&&!fs.length?'<div class="meta">割り当てなし</div>':'')
-    +'<div class="acts">'+(t.done?'<button data-a="reopen">戻す</button>':'<button data-a="done">完了</button><button data-a="alloc">割り当て直す</button>'+(kids.length?'':'<button data-a="toev">📅 予定に入れる</button>'))
+    +(!t.done&&!kids.length&&!fs.length?'<div class="meta unal">未割当</div>':'')
+    +'<div class="acts">'+(t.done?'<button data-a="reopen">戻す</button>':'<button data-a="done">完了</button><button data-a="alloc">'+(fs.length?'割り当て直す':'割り当てる')+'</button>'+(!kids.length&&fs.some(e=>e.auto)?'<button data-a="unalloc">割り当てを外す</button>':'')+(kids.length?'':'<button data-a="toev">📅 予定に入れる</button>'))
     +(sub?'':'<button data-a="sub">🧩 サブタスク</button>')+'<button data-a="edit">編集</button><button data-a="log">履歴</button><button data-a="del">削除</button></div>'
     +'<div class="log">'+t.log.map(l=>{const d=new Date(l.t);return (d.getMonth()+1)+'/'+d.getDate()+' '+pad(d.getHours())+':'+pad(d.getMinutes())+'　'+esc(l.x);}).join('<br>')+'</div></div>'
     +kids.map(card).join('');};
@@ -1141,7 +1150,8 @@ function renderTasks(){
     if(a==='log'){c.classList.toggle('open');return;}
     if(a==='sub'){showView('chatView');$('#inp').value=t.title+' > ';$('#inp').focus();renderSugs();return;}
     if(a==='done')markDone(t,now);
-    if(a==='alloc'){wantAlloc(t);t.log.push({t:now,x:'割り当て直し'});}
+    if(a==='alloc'){wantAlloc(t);t.log.push({t:now,x:'割り当て'});}
+    if(a==='unalloc'){dropFutureAuto(t);t.allocShort=0;t.log.push({t:now,x:'割り当てを外した'});}
     if(a==='reopen'){reopen(t,now);childrenOf(t).forEach(k=>{if(k.done)reopen(k,now);});}
     if(a==='del'){const n=childrenOf(t).length;if(!confirm('「'+slotTitle(t)+'」を削除しますか？'+(n?'\nサブタスク'+n+'つも一緒に消えます。':'')))return;removeTask(t);}
     replanAll();save();renderAll();
@@ -1280,7 +1290,7 @@ function openEditor(c,onClose,opt){
       if(F.done&&!x.done)markDone(x,now);
       if(!F.done&&x.done){reopen(x,now);childrenOf(x).forEach(k=>{if(k.done)reopen(k,now);});}
       if(F.noWin&&x.win){delete x.win;if(!x.done)wantAlloc(x);}
-      if(!x.done&&!hasKids(x)&&(!t||x.est!==oldEst)){x.estGuess=false;wantAlloc(x);}
+      if(!x.done&&!hasKids(x)&&(!t||x.est!==oldEst)){x.estGuess=false;if(isAllocated(x))wantAlloc(x);}
       let newEv=null;
       if(F.addEv&&!hasKids(x)){
         const s1=toMin(F.evStart),e1=toMin(F.evEnd);
