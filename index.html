@@ -1686,6 +1686,18 @@ applyTheme();
   });
   if(ch)save();
 })();
+(function unallocOnce(){
+  try{if(localStorage.getItem('cs.unalloc21'))return;}catch(e){return;}
+  const n=new Date(),tk=dkey(n),nm=n.getHours()*60+n.getMinutes();
+  const notStarted=e=>e.date>tk||(e.date===tk&&e.start>nm);
+  const ids=new Set(S.events.filter(e=>e.auto&&notStarted(e)).map(e=>e.taskId));
+  const cnt=S.events.filter(e=>e.auto&&notStarted(e)).length;
+  S.events=S.events.filter(e=>!(e.auto&&notStarted(e)));
+  S.tasks.forEach(t=>{t.pendingAlloc=false;t.allocShort=0;if(ids.has(t.id))t.log.push({t:n.toISOString(),x:'割り当てを外した（まとめて未割当に）'});});
+  try{localStorage.setItem('cs.unalloc21','1');}catch(e){}
+  if(cnt)S.chat.push({id:uid(),who:'app',text:'🗓 これまで自動で置いていたタスクの割り当て（'+cnt+'件・'+ids.size+'タスク）を外して、未割当にしました。',t:n.toISOString()});
+  save();
+})();
 backfillRefs();
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showView(b.dataset.v));
 $('#send').onclick=()=>{const v=$('#inp').value;$('#inp').value='';handle(v);};
