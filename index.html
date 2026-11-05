@@ -170,6 +170,10 @@ h2{font-size:14px;color:var(--sub);margin:16px 0 6px;font-weight:600}
 .dlmark{position:absolute;left:0;right:0;border-top:2px solid var(--c);z-index:3;cursor:pointer}
 .dlmark span{position:absolute;right:1px;top:-12px;font-size:9px;line-height:11px;background:var(--bg);color:var(--c);padding:0 2px;border-radius:3px;max-width:100%;overflow:hidden;white-space:nowrap}
 .blk.b-dl{grid-template-columns:96px 1fr;padding:4px 10px;border-top:2px solid var(--c);border-radius:0;color:var(--ink)}
+.ptmark{position:absolute;left:0;right:0;border-top:2px dotted var(--c);z-index:3;cursor:pointer}
+.ptmark span{position:absolute;left:1px;top:-12px;font-size:9px;line-height:11px;background:var(--bg);color:var(--c);padding:0 2px;border-radius:3px;max-width:100%;overflow:hidden;white-space:nowrap}
+.blk.b-point{grid-template-columns:96px 1fr;padding:4px 10px;border-top:2px dotted var(--c);border-radius:0;color:var(--ink)}
+.blk.b-travel .ti{color:var(--ink)}
 .subadd{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
 .mv{display:flex;gap:4px;width:64px;flex:none}.mv button{width:28px;height:28px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;font-size:11px;padding:0}.mv button:disabled{opacity:.3}.mv .sm{font-size:11px;color:var(--sub)}
 
@@ -302,6 +306,10 @@ function parse(raw,now){
   let m=take(/[#＃](高|中|低)(?=\s|$)/); if(m)r.prio={'高':'high','中':'mid','低':'low'}[m[1]];
   m=take(/[#＃](\S+)/); if(m)r.cat=m[1];
   m=take(/@(\S+)/); if(m)r.place=m[1];
+  if(take(/範囲なし|範囲を外す/))r.noWin=true;
+  if(m=take(new RegExp('(午前|午後)?'+T_PART+'\\s*(?:-|〜|~|～|から)\\s*(午前|午後)?'+T_PART+'\\s*の?間'))){r.win=true;r.winS=partMin(m[2],m[3],m[4],m[5],m[1]);r.winE=partMin(m[7],m[8],m[9],m[10],m[6]||m[1]);}
+  else if(m=take(new RegExp('(午前|午後)?'+T_PART+'\\s*(?:以降|以後|より後)'))){r.win=true;r.winS=partMin(m[2],m[3],m[4],m[5],m[1]);}
+  else if(m=take(new RegExp('(午前|午後)?'+T_PART+'\\s*(?:以前|より前)'))){r.win=true;r.winE=partMin(m[2],m[3],m[4],m[5],m[1]);}
   m=take(new RegExp('(午前|午後)?'+T_PART+'\\s*(?:-|〜|~|～|から)\\s*(午前|午後)?'+T_PART));
   if(m){r.tStart=partMin(m[2],m[3],m[4],m[5],m[1]);r.tEnd=partMin(m[7],m[8],m[9],m[10],m[6]||m[1]);}
   else{
@@ -326,6 +334,8 @@ function parse(raw,now){
     }else diff=(t-today.getDay()+7)%7;
     r.date=addDays(today,diff);
   }
+  if(take(/以降|以後|より後/)){r.win=true;r.winFromDate=true;}
+  else if(take(/以前|より前/)){r.win=true;r.winToDate=true;}
   if(m=take(/(\d+(?:\.\d+)?)\s*(分|時間)\s*(やった|進めた|作業した|した|できた)/))r.spent=+m[1]*(m[2]==='時間'?60:1);
   else if(m=take(/あと\s*(\d+(?:\.\d+)?)\s*(分|時間)/))r.left=+m[1]*(m[2]==='時間'?60:1);
   else if(m=take(/(\d{1,3})\s*[%％]/))r.pct=Math.min(100,+m[1]);
@@ -345,6 +355,37 @@ function parse(raw,now){
 }
 
 
+function winFrom(p,now){
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const base=p.date||today;let f=null,t=null;
+  if(p.winS!=null){f=atTime(base,p.winS);t=p.winE!=null?atTime(base,p.winE):addDays(base,1);}
+  else if(p.winE!=null){f=null;t=atTime(base,p.winE);}
+  else if(p.winFromDate){f=new Date(base);}
+  else if(p.winToDate){t=addDays(base,1);}
+  if(f&&t&&t<=f)t=addDays(t,1);
+  return {from:f?f.toISOString():null,to:t?t.toISOString():null};
+}
+function effWin(t){const p=parentOf(t);return t.win||(p&&p.win)||null;}
+function winLabel(w){
+  if(!w)return '';
+  const f=w.from?new Date(w.from):null,t=w.to?new Date(w.to):null;
+  const day=d=>fmtDay(dkey(d)),tm=d=>hm(d.getHours()*60+d.getMinutes());
+  let tD=null,tT=null;
+  if(t){if(t.getHours()===0&&t.getMinutes()===0){tD=day(addDays(t,-1));tT='24:00';}else{tD=day(t);tT=tm(t);}}
+  if(f&&t){const fD=day(f);return fD+' '+tm(f)+'〜'+(tD===fD?'':tD+' ')+tT;}
+  if(f)return day(f)+(f.getHours()||f.getMinutes()?' '+tm(f):'')+'以降';
+  return tD+(tT==='24:00'?'':' '+tT)+'まで';
+}
+function parseMove(text,now){
+  let w=' '+text.replace(/　/g,' ')+' ';let s=null,e=null,from=null,to=null;
+  const tm=suf=>{const m=w.match(new RegExp('(午前|午後)?'+T_PART+'\\s*'+suf));if(!m)return null;w=w.replace(m[0],' ');return partMin(m[2],m[3],m[4],m[5],m[1]);};
+  s=tm('発');e=tm('着');
+  const am=w.match(/(\S*?)\s*(?:→|->|⇒)\s*(\S*)/);
+  if(am){from=am[1]||null;to=am[2]||null;w=w.replace(am[0],' ');}
+  const p=parse(w,now);
+  if(s==null&&e==null){if(p.tStart!=null){s=p.tStart;e=p.tEnd;}else if(p.t!=null)s=p.t;}
+  return {p,s,e,from,to};
+}
 function fmtDay(k){const d=fromKey(k);return (d.getMonth()+1)+'/'+d.getDate()+'('+WD[d.getDay()]+')';}
 function taskIcon(t){return '📌';}
 function taskKindName(t){return 'タスク';}
@@ -413,9 +454,14 @@ function placeTask(t,need){
   const now=new Date(),today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
   const nowMin=ceil5(now.getHours()*60+now.getMinutes());
   const {maxBlock,brk}=S.settings;
+  const w=effWin(t),wf=w&&w.from?new Date(w.from):null,wt=w&&w.to?new Date(w.to):null;
   for(let i=0;i<62&&need>0;i++){
     const d=addDays(today,i);
-    for(const g of gapsOf(busyFor(d),i===0?nowMin:0)){
+    if(wt&&d>=wt)break;
+    const lo=wf?Math.max(0,Math.round((wf-d)/60000)):0;if(lo>=1440)continue;
+    const hi=wt?Math.min(1440,Math.round((wt-d)/60000)):1440;
+    for(const g0 of gapsOf(busyFor(d),i===0?nowMin:0)){
+      const g=[Math.max(ceil5(g0[0]),ceil5(lo)),Math.min(Math.floor(g0[1]/5)*5,hi)];
       let cur=g[0];
       while(need>0&&g[1]-cur>=10){
         let len=Math.min(need,maxBlock,g[1]-cur);if(len<5)break;
@@ -439,11 +485,13 @@ function dropAllAuto(t){S.events=S.events.filter(e=>!(e.taskId===t.id&&e.auto));
 function allocText(t){
   if(hasKids(t))return childrenOf(t).filter(k=>!k.done).map(k=>'・'+k.title+'：'+allocText(k).replace(/^割り当て：/,'')).join('\n');
   const all=futureSlots(t);
-  if(!all.length)return '割り当てられる空きがありませんでした';
+  const w=effWin(t);
+  if(!all.length)return (w?'割り当てる範囲（'+winLabel(w)+'）に':'割り当てられる')+'空きがありませんでした';
   const dl=effDeadline(t);
   const late=dl&&all.some(e=>evEndDate(e)>new Date(dl));
   return '割り当て：'+all.slice(0,3).map(evLabel).join('、')+(all.length>3?' ほか'+(all.length-3)+'回':'')
-    +(t.allocShort?'\n⚠ '+fmtDur(t.allocShort)+'ぶん入りきりませんでした':'')+(late?'\n⚠ 期限に間に合わない割り当てがあります':'');
+    +(w?'\n割り当てる範囲：'+winLabel(w):'')
+    +(t.allocShort?'\n⚠ '+fmtDur(t.allocShort)+'ぶん'+(w?'範囲に':'')+'入りきりませんでした':'')+(late?'\n⚠ 期限に間に合わない割り当てがあります':'');
 }
 function needsAlloc(t){
   if(t.done||hasKids(t)||futureSlots(t).length)return false;
@@ -464,7 +512,7 @@ function topTask(text){
 }
 function newTaskFrom(p,raw,now,extra){
   let deadline=null,dlNoTime=false;
-  if(p.date||p.t!=null){
+  if(!p.win&&(p.date||p.t!=null)){
     let d=p.date||new Date(now.getFullYear(),now.getMonth(),now.getDate());
     let min=p.t!=null?p.t:(23*60+59);dlNoTime=p.t==null;
     let dt=atTime(d,min);
@@ -472,7 +520,7 @@ function newTaskFrom(p,raw,now,extra){
     deadline=dt.toISOString();
   }
   const t=Object.assign({id:uid(),title:p.title,cat:p.cat||selCat||'未分類',deadline,dlNoTime,prio:p.prio||null,est:p.dur||S.settings.defEst,estGuess:!p.dur,
-    done:false,created:now.toISOString(),log:[{t:now.toISOString(),x:'登録：'+raw}],pendingAlloc:true},extra||{});
+    done:false,created:now.toISOString(),log:[{t:now.toISOString(),x:'登録：'+raw}],pendingAlloc:true},p.win?{win:winFrom(p,now)}:{},extra||{});
   S.tasks.push(t);return t;
 }
 function atTime(date,min){const d=new Date(date);d.setHours(0,0,0,0);d.setMinutes(min);return d;}
@@ -489,21 +537,27 @@ function findEvent(text){
   for(const e of futureEvents()){ if(text.includes(e.title)&&(!best||e.title.length>best.title.length))best=e; }
   return best;
 }
-function evIcon(e){return e&&e.rec?'📝':'📅';}
-function evKind(e){return e&&e.rec?'記録':'予定';}
-function evLabel(e){const d=fromKey(e.date);return (d.getMonth()+1)+'/'+d.getDate()+'('+WD[d.getDay()]+') '+hm(e.start)+'–'+hm(e.end);}
+function evIcon(e){return e&&e.rec?'📝':e&&e.move?'🚃':'📅';}
+function evKind(e){return e&&e.rec?'記録':e&&e.move?'移動':'予定';}
+function evTime(e){return e.end<=e.start?hm(e.start)+'（時刻だけ）':e.move?hm(e.start)+'発–'+hm(e.end)+'着':hm(e.start)+'–'+hm(e.end);}
+function evLabel(e){const d=fromKey(e.date);return (d.getMonth()+1)+'/'+d.getDate()+'('+WD[d.getDay()]+') '+evTime(e);}
 function applyToEvent(ev,p,raw){
   if(p.cancel){S.events=S.events.filter(x=>x.id!==ev.id);return '🗑 '+evKind(ev)+'「'+ev.title+'」を削除しました';}
   const out=[],len=ev.end-ev.start;
+  if(ev.move&&raw){const mm=parseMove(raw.replace(ev.title,' '),new Date());
+    if(mm.from||mm.to){if(mm.from)ev.from=mm.from;if(mm.to)ev.to=mm.to;ev.title=(ev.from||'')+'→'+(ev.to||'');out.push('区間');}
+    if(mm.s!=null||mm.e!=null){if(mm.s!=null&&mm.e!=null){ev.start=mm.s;ev.end=mm.e>mm.s?mm.e:mm.s+len;}else if(mm.s!=null){ev.start=mm.s;ev.end=mm.s+len;}else{ev.end=mm.e;ev.start=Math.max(0,mm.e-len);}
+      if(mm.p.date)ev.date=dkey(mm.p.date);out.push('時刻');p={};}
+  }
   if(p.date){ev.date=dkey(p.date);out.push('日付');}
   if(p.tStart!=null){ev.start=p.tStart;ev.end=p.tEnd>p.tStart?p.tEnd:p.tStart+len;out.push('時間');}
   else if(p.t!=null){ev.start=p.t;ev.end=p.t+(p.dur||len);out.push('時間');}
   else if(p.dur!=null){ev.end=ev.start+p.dur;out.push('長さ');}
   if(p.cat){ev.cat=p.cat;out.push('カテゴリ');}
-  if(p.place){ev.place=p.place;out.push('場所');}
+  if(p.place&&!ev.move){ev.place=p.place;out.push('場所');}
   if(!out.length)return null;
   if(ev.end>1440)ev.end=1440;
-  return '✎ '+evIcon(ev)+' '+evKind(ev)+'「'+ev.title+'」の'+out.join('・')+'を変えました\n'+evLabel(ev)+'（'+ev.cat+'）'+(ev.place?' @'+ev.place:'');
+  return '✎ '+evIcon(ev)+' '+evKind(ev)+'「'+ev.title+'」の'+out.join('・')+'を変えました\n'+evLabel(ev)+(ev.move?'':'（'+ev.cat+'）')+(ev.place?' @'+ev.place:'');
 }
 
 
@@ -533,6 +587,22 @@ function handle(raw){
     const ev={id:uid(),title:p.title,cat,date:dkey(date),start:s,end:Math.min(1440,e),place:p.place||null,rec:true};
     S.events.push(ev);
     addMsg('app','📝 記録しました\n'+ev.title+'（'+cat+'）\n'+evLabel(ev)+'（'+recDur(ev)+(guess?'・仮':'')+'）',true,refOf(ev));
+    return finish();
+  }
+  const mvM=raw.match(/^移動(?:[\s　:：]+(.*))?$/);
+  if(mvM){
+    const {p,s:s0,e:e0,from,to}=parseMove(mvM[1]||'',now);
+    let s=s0,e=e0,guess=false;
+    if(s==null&&e==null){addMsg('app','移動の時刻が読み取れませんでした。\n例：移動 小手指→高田馬場 8:12発 8:40着 ／ 移動 明日 8:12-8:40');snapshot=null;return finish();}
+    if(e==null){e=s+(p.dur||30);guess=!p.dur;}
+    if(s==null){s=Math.max(0,e-(p.dur||30));guess=!p.dur;}
+    if(e<=s)e+=1440;
+    const date=p.date||(()=>{const d=new Date(now.getFullYear(),now.getMonth(),now.getDate());return (s<now.getHours()*60+now.getMinutes())?addDays(d,1):d;})();
+    const title=(from||to)?(from||'')+'→'+(to||''):(p.title||'移動');
+    const ev={id:uid(),title,cat:p.cat||'未分類',date:dkey(date),start:s,end:Math.min(1440,e),place:null,move:true,from:from||null,to:to||null};
+    S.events.push(ev);
+    const mv=replanAll();
+    addMsg('app','🚃 移動を入れました\n'+title+'\n'+evLabel(ev)+(guess?'（長さは仮に30分）':'')+movedText(mv),true,refOf(ev));
     return finish();
   }
   const ren=raw.match(/^(.+?)\s*(?:→|->|⇒|＝>)\s*(.+)$/);
@@ -607,13 +677,11 @@ function handle(raw){
   if(!p.until&&(p.tStart!=null||(p.t!=null&&!p.pct))){
     const date=p.date||(()=>{const d=new Date(now.getFullYear(),now.getMonth(),now.getDate());const s=p.tStart??p.t;return (s<now.getHours()*60+now.getMinutes())?addDays(d,1):d;})();
     const s=p.tStart??p.t;
-    const e=p.tEnd??(s+(p.dur||60));
-    const ev={id:uid(),title:p.title,cat,date:dkey(date),start:s,end:e,place:p.place||matchPlace(p.title)};
+    const e=p.tEnd??(p.dur?s+p.dur:s);
+    const ev={id:uid(),title:p.title,cat,date:dkey(date),start:s,end:Math.min(1440,e),place:p.place||matchPlace(p.title)};
     S.events.push(ev);
-    const pl=ev.place?placeOf(ev.place):null;
     const mv=replanAll();
-    addMsg('app','📅 予定を入れました（時刻固定）\n'+ev.title+'（'+cat+'）\n'+(date.getMonth()+1)+'/'+date.getDate()+'('+WD[date.getDay()]+') '+hm(s)+'–'+hm(e)
-      +(pl&&pl.travel?'\n移動 '+pl.travel+'分 を前後に確保しました':'')+movedText(mv),true,refOf(ev));
+    addMsg('app','📅 予定を入れました'+(ev.end<=ev.start?'（時刻だけ・時間は埋めません）':'（時刻固定）')+'\n'+ev.title+'（'+cat+'）\n'+evLabel(ev)+(ev.place?' @'+ev.place:'')+movedText(mv),true,refOf(ev));
     return finish();
   }
   const t=newTaskFrom(p,raw,now);
@@ -631,7 +699,9 @@ function applyToTask(t,p,now,raw,noPlan){
   if(p.pct!=null){markDone(t,nowS);out.push('完了'+(kids?'（サブタスクも全部）':''));realloc=false;}
   if(p.dur!=null){t.est=p.dur;t.estGuess=false;realloc=true;out.push('確保時間 '+fmtDur(p.dur));}
   if(realloc&&!t.done){wantAlloc(t);if(p.dur==null)out.push('割り当て直し');}
-  if(p.date||p.t!=null){
+  if(p.win){t.win=winFrom(p,now);if(!t.done)wantAlloc(t);out.push('割り当てる範囲 '+winLabel(t.win));}
+  if(p.noWin&&t.win){delete t.win;if(!t.done)wantAlloc(t);out.push('割り当てる範囲なし');}
+  if(!p.win&&(p.date||p.t!=null)){
     const cur=t.deadline||effDeadline(t);
     const d=p.date||(cur?new Date(cur):new Date(now.getFullYear(),now.getMonth(),now.getDate()));
     t.deadline=atTime(d,p.t!=null?p.t:23*60+59).toISOString();t.dlNoTime=p.t==null;out.push('期限 '+fmtDL(t)+'まで');
@@ -665,15 +735,25 @@ const HELP=`■ 言葉
 ・割り当て：確保時間をカレンダーの空きに置いたもの
 ・期限：いつまでに終わらせるか（やる日とは別）
 
-■ 新しく入れる（3種類）
+■ 新しく入れる（4種類）
 📌 タスク … 内容＋確保時間。期限・優先度・カテゴリは付けても付けなくてもいい
 　例：金曜17時までにレポート 2時間 #高 #学校
 　例：明日 銀行で振込 15分 #手続き
 　例：部屋の片付け 1時間（期限なし・確保時間を書かないと30分）
 📅 予定 … 時刻を書く（「まで」は付けない）
-　例：木曜 19時 映画 ／ 11/10 10:00-12:00 面接 @大学
+　例：11/10 10:00-12:00 面接 @大学 ／ 木曜 19時 映画 2時間
+　時刻だけで長さを書かないと「時刻だけ」の予定（点線の印。時間は埋めない）
+　例：19時 友達に電話
 📝 記録 … 実際にやったこと。先頭に「記録」
 　例：記録 13:00-14:30 レポート ／ 記録 30分 洗濯（今終わった扱い）
+🚃 移動 … 先頭に「移動」。出発地→到着地は書かなくてもいい
+　例：移動 小手指→高田馬場 8:12発 8:40着 ／ 移動 明日 8:12-8:40
+　発か着の片方だけなら、長さは仮に30分
+
+■ 割り当てる範囲（タスクを置く時間を決める）
+・今日22:00以降に日記 30分 ／ 明日 13時-17時の間にレポート 2時間 ／ 金曜以前に洗濯
+・範囲に入りきらないぶんは置かずに「入りきらない」と出す。範囲は組み直しても守る
+・あとから：日記 明日20時以降 ／ 日記 範囲なし
 
 ■ サブタスク（親 > 子）
 　例：レポート > 資料集め 1時間、構成 30分、執筆 2時間
@@ -707,7 +787,7 @@ const HELP=`■ 言葉
 ■ そのほか
 ・日付：今日・明日・明後日・昨日・月〜日曜・来週〇曜・11/5
 ・時刻：17時・17時半・17:30・午後3時
-・#カテゴリ　@場所（移動時間を確保）
+・#カテゴリ　@場所
 ・何行かまとめて貼ると、1行ずつ送ったのと同じになる
 ・「今日」「明日」でカレンダー、「シフト」でシフト取り込み
 ・返信の「✎ 編集」で、その項目を全部直せる
@@ -762,20 +842,19 @@ function busyFor(d){
     if(b&&b.e<=b.s&&b.e>0)out.push({type:'routine',title:r.title+(b.ov?'（この日だけ変更）':''),s:0,e:b.e});
   }
   for(const ev of S.events.filter(e=>e.date===k)){
-    const pl=ev.place?placeOf(ev.place):null,tr=pl?+pl.travel||0:0;
     if(ev.rec){out.push({type:'rec',title:ev.title,cat:ev.cat,s:ev.start,e:ev.end,id:ev.id});continue;}
     if(ev.auto){const t=S.tasks.find(x=>x.id===ev.taskId);
       const dl=t?effDeadline(t):null;
       out.push({type:'task',title:ev.title+(t&&t.done?'（完了）':''),cat:ev.cat,s:ev.start,e:ev.end,id:ev.taskId,icon:t&&t.parentId?'🧩':'📌',late:!!(t&&!t.done&&dl&&evEndDate(ev)>new Date(dl)),dlText:dl?(t.deadline?fmtDL(t):fmtDL(parentOf(t))):''});continue;}
-    if(tr){out.push({type:'travel',title:'移動（→'+ev.place+'）',s:Math.max(0,ev.start-tr),e:ev.start});
-           out.push({type:'travel',title:'移動（'+ev.place+'→）',s:ev.end,e:Math.min(1440,ev.end+tr)});}
+    if(ev.move){out.push({type:'travel',title:'🚃 '+ev.title,cat:ev.cat,s:ev.start,e:ev.end,id:ev.id});continue;}
+    if(ev.end<=ev.start){out.push({type:'point',title:ev.title,cat:ev.cat,s:ev.start,e:ev.start,id:ev.id});continue;}
     out.push({type:'event',title:ev.title+(ev.taskId?'（作業）':''),cat:ev.cat,s:ev.start,e:ev.end,id:ev.id});
   }
   return out.sort((a,b)=>a.s-b.s);
 }
 function gapsOf(busy,from){
   const g=[];let cur=from;
-  for(const b of busy){ if(b.s>cur)g.push([cur,b.s]); cur=Math.max(cur,b.e); }
+  for(const b of busy){ if(b.e<=b.s)continue; if(b.s>cur)g.push([cur,b.s]); cur=Math.max(cur,b.e); }
   if(cur<1440)g.push([cur,1440]);
   return g.filter(x=>x[1]-x[0]>=10);
 }
@@ -934,7 +1013,7 @@ function monthHTML(){
     const d=addDays(start,i),k=dkey(d);
     const evs=S.events.filter(e=>e.date===k&&!e.auto).sort((a,b)=>a.start-b.start);
     const due=dueOn(k).filter(t=>!t.done);
-    const items=evs.map(e=>'<div class="mi '+(e.rec?'rec':'ev')+'"'+cv(e.cat)+'>'+(e.rec?'📝':hm(e.start).replace(/^0/,''))+' '+esc(e.title)+'</div>')
+    const items=evs.map(e=>'<div class="mi '+(e.rec?'rec':'ev')+'"'+cv(e.cat)+'>'+(e.rec?'📝':(e.move?'🚃':'')+hm(e.start).replace(/^0/,''))+' '+esc(e.title)+'</div>')
       .concat(due.map(t=>'<div class="mi dl"'+cv(t.cat)+'>📌'+esc(t.title)+'</div>'));
     const more=items.length>3?'<div class="mi more">+'+(items.length-3)+'</div>':'';
     h+='<div class="mc'+(d.getMonth()!==calDate.getMonth()?' out':'')+(k===tk?' today':'')+'" data-go="'+k+'">'
@@ -960,6 +1039,7 @@ function weekHTML(){
     for(let H=1;H<24;H++)h+='<div class="gl" style="top:'+(H*60*PX)+'px"></div>';
     for(const b of dayBlocks(d,P)){
       if(b.type==='break')continue;
+      if(b.type==='point'){h+='<div class="ptmark" style="top:'+(b.s*PX)+'px;--c:'+catColor(b.cat)+'" data-open="'+b.id+'"><span>'+esc(b.title)+'</span></div>';continue;}
       const top=b.s*PX,ht=Math.max(8,(b.e-b.s)*PX-1);
       h+='<div class="wb b-'+b.type+(past?' past':'')+(b.late?' lateb':'')+'" style="top:'+top+'px;height:'+ht+'px;--c:'+catColor(b.cat)+'"'+(b.id?' data-open="'+b.id+'"':'')+'>'
         +(ht>=14?'<span>'+esc(b.title)+'</span>':'')+'</div>';
@@ -971,7 +1051,7 @@ function weekHTML(){
     if(k===tk)h+='<div class="nowline" style="top:'+(nowMin*PX)+'px"></div>';
     h+='</div>';
   }
-  return h+'</div></div><div class="legend">色はカテゴリ。塗りつぶし＝予定、枠線だけ＝記録、薄い色＋左の線＝タスクの割り当て、グレー＝ルーティン、斜線＝移動、📌の横線＝期限の時刻、曜日の下の📌＝その日が期限のタスクの数。曜日を押すとその日の一覧へ</div>';
+  return h+'</div></div><div class="legend">色はカテゴリ。塗りつぶし＝予定、枠線だけ＝記録、薄い色＋左の線＝タスクの割り当て、グレー＝ルーティン、斜線＝移動、点線＝時刻だけの予定、📌の横線＝期限の時刻、曜日の下の📌＝その日が期限のタスクの数。曜日を押すとその日の一覧へ</div>';
 }
 
 function dayHTML(){
@@ -996,12 +1076,18 @@ function dayHTML(){
       h+='<div class="blk b-dl" data-open="'+b.id+'"'+cv(b.cat)+'><span class="tm">'+hm(b.s)+'</span><span><span class="ti">📌 期限：'+esc(b.title)+'</span></span></div>';
       continue;
     }
+    if(b.type==='point'){
+      if(b.s<showFrom)continue;
+      if(b.s>cur&&b.s-cur>=10){h+='<div class="blk b-free"><span class="tm">'+hm(cur)+'–'+hm(b.s)+'</span><span>空き '+fmtDur(b.s-cur)+'</span></div>';cur=b.s;}
+      h+='<div class="blk b-point" data-open="'+b.id+'"'+cv(b.cat)+'><span class="tm">'+hm(b.s)+'</span><span><span class="ti">📅 '+esc(b.title)+'</span> <span class="sm">'+esc(b.cat)+'</span></span></div>';
+      continue;
+    }
     if(b.e<=showFrom)continue;
     if(b.s>cur&&b.s-cur>=10)h+='<div class="blk b-free"><span class="tm">'+hm(cur)+'–'+hm(b.s)+'</span><span>空き '+fmtDur(b.s-cur)+'</span></div>';
     const isNow=k===tk&&b.s<=nowMin&&nowMin<b.e;
     if(b.type==='break')h+='<div class="blk b-break"><span class="tm">'+hm(b.s)+'–'+hm(b.e)+'</span><span>休憩</span></div>';
     else h+='<div class="blk b-'+b.type+(isNow?' b-now':'')+(k<tk?' past':'')+'"'+(b.id?' data-open="'+b.id+'"':'')+(b.cat?cv(b.cat):'')+'><span class="tm">'+hm(Math.max(b.s,showFrom))+'–'+hm(b.e)+'</span><span><span class="ti">'+(b.type==='event'?'📅 ':b.type==='rec'?'📝 ':b.type==='task'?b.icon+' ':'')+esc(b.title)+'</span>'
-      +(b.cat?' <span class="sm">'+esc(b.cat)+'</span>':'')+(b.dlText?'<br><span class="sm">期限 '+b.dlText+'まで</span>':'')+(b.late?' <span class="sm late">期限に間に合わない</span>':'')+'</span></div>';
+      +(b.cat&&b.type!=='travel'?' <span class="sm">'+esc(b.cat)+'</span>':'')+(b.dlText?'<br><span class="sm">期限 '+b.dlText+'まで</span>':'')+(b.late?' <span class="sm late">期限に間に合わない</span>':'')+'</span></div>';
     cur=Math.max(cur,b.e);
   }
   if(cur<1440&&1440-cur>=10)h+='<div class="blk b-free"><span class="tm">'+hm(cur)+'–24:00</span><span>空き</span></div>';
@@ -1021,6 +1107,7 @@ function renderTasks(){
     +(sub&&!t.deadline?'':'<div class="meta'+(late?' late':'')+'">'+whenLabel(t)+'</div>')
     +(kids.length?'<div class="prog">サブタスク '+kidsDone(t)+' 完了</div><div class="bar"><i style="width:'+Math.round(kids.filter(x=>x.done).length/kids.length*100)+'%"></i></div>':'')
     +'<div class="meta">'+(t.done?'完了':allocLabel(t))+'</div>'
+    +(t.win&&!t.done?'<div class="meta">割り当てる範囲：'+winLabel(t.win)+'</div>':'')
     +(t.memo?'<div class="memo">'+esc(t.memo)+'</div>':'')
     +(!t.done&&!kids.length&&fs.length?'<div class="meta">割り当て：'+fs.map(evLabel).join('、')+'</div>':'')
     +(!t.done&&!kids.length&&!fs.length?'<div class="meta">割り当てなし</div>':'')
@@ -1035,8 +1122,8 @@ function renderTasks(){
   });
   if(!act.length)html+='<div class="empty">進行中のタスクはありません</div>';
   const evs=S.events.filter(e=>!e.rec&&!e.auto&&e.date>=dkey(new Date())).sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start);
-  if(evs.length)html+='<h2>📅 これからの予定（時刻固定）</h2>'+evs.map(e=>{const d=fromKey(e.date);return '<div class="card" data-ev="'+e.id+'"'+cv(e.cat)+'><div class="top"><span class="nm">📅 '+esc(e.title)+'</span><span class="meta">'+(d.getMonth()+1)+'/'+d.getDate()+'('+WD[d.getDay()]+') '+hm(e.start)+'–'+hm(e.end)+'</span></div>'
-    +'<div class="meta">'+esc(e.cat)+(e.place?' ／ @'+esc(e.place):'')+(e.taskId&&S.tasks.some(t=>t.id===e.taskId)?' ／ 📌 タスクの作業時間':'')+'</div>'+(e.memo?'<div class="memo">'+esc(e.memo)+'</div>':'')+'<div class="acts"><button data-a="evedit">編集</button><button data-a="evdel">削除</button></div></div>';}).join('');
+  if(evs.length)html+='<h2>📅 これからの予定（時刻固定）</h2>'+evs.map(e=>{const d=fromKey(e.date);return '<div class="card" data-ev="'+e.id+'"'+cv(e.cat)+'><div class="top"><span class="nm">'+evIcon(e)+' '+esc(e.title)+'</span><span class="meta">'+evLabel(e)+'</span></div>'
+    +'<div class="meta">'+(e.move?'移動':esc(e.cat))+(e.place?' ／ @'+esc(e.place):'')+(e.taskId&&S.tasks.some(t=>t.id===e.taskId)?' ／ 📌 タスクの作業時間':'')+'</div>'+(e.memo?'<div class="memo">'+esc(e.memo)+'</div>':'')+'<div class="acts"><button data-a="evedit">編集</button><button data-a="evdel">削除</button></div></div>';}).join('');
   const recFrom=dkey(addDays(todayStart(),-13));
   const recs=S.events.filter(e=>e.rec&&(e.date>=recFrom||e.id===editId)).sort((a,b)=>b.date.localeCompare(a.date)||b.start-a.start);
   if(recs.length){
@@ -1091,7 +1178,7 @@ function openEditor(c,onClose,opt){
   const t=S.tasks.find(x=>x.id===id), ev=t?null:S.events.find(x=>x.id===id);
   if(!t&&!ev)return;
   const it=t||ev;
-  let kind=ev?(ev.rec?'rec':'ev'):'task';
+  let kind=ev?(ev.rec?'rec':ev.move?'mv':'ev'):'task';
   const today=dkey(new Date());
   const dl=t&&t.deadline?new Date(t.deadline):null;
   const F={
@@ -1103,7 +1190,7 @@ function openEditor(c,onClose,opt){
     date:ev?ev.date:(dl?dkey(dl):today),
     start:ev?hm(ev.start):(dl&&!t.dlNoTime?pad(Math.max(0,dl.getHours()-1))+':00':'10:00'),
     end:ev?hm(ev.end):null,
-    place:ev?ev.place||'':'',
+    place:ev?ev.place||'':'',from:ev&&ev.from||'',to:ev&&ev.to||'',noWin:false,
     est:t?t.est:(ev.end-ev.start), done:t?!!t.done:false,
     prio:t?(t.prio||(t.parentId?'':'mid')):'mid', subs:''
   };
@@ -1111,7 +1198,8 @@ function openEditor(c,onClose,opt){
   const v=k=>{const el=c.querySelector('[data-f="'+k+'"]');return !el?undefined:(el.type==='checkbox'?el.checked:el.value);};
   const hmVal=k=>Math.round((+v(k+'H')||0)*60+(+v(k+'M')||0));
   function collect(){
-    ['title','cat','memo','dDate','dTime','date','start','end','place','prio','subs'].forEach(k=>{const x=v(k);if(x!==undefined)F[k]=x;});
+    if(v('noWin')!==undefined)F.noWin=v('noWin');
+    ['title','cat','memo','dDate','dTime','date','start','end','place','from','to','prio','subs'].forEach(k=>{const x=v(k);if(x!==undefined)F[k]=x;});
     if(v('noDl')!==undefined)F.noDl=v('noDl');
     if(v('addEv')!==undefined)F.addEv=v('addEv');
     ['evDate','evStart','evEnd'].forEach(k=>{const x=v(k);if(x!==undefined)F[k]=x;});
@@ -1120,7 +1208,7 @@ function openEditor(c,onClose,opt){
   }
   function draw(){
     let f='<div class="edit">';
-    f+='<label>種類</label><select data-f="kind"><option value="task"'+(kind==='task'?' selected':'')+'>📌 タスク</option><option value="ev"'+(kind==='ev'?' selected':'')+'>📅 予定（時刻が決まっている）</option><option value="rec"'+(kind==='rec'?' selected':'')+'>📝 記録（実際にやったこと）</option></select>';
+    f+='<label>種類</label><select data-f="kind"><option value="task"'+(kind==='task'?' selected':'')+'>📌 タスク</option><option value="ev"'+(kind==='ev'?' selected':'')+'>📅 予定（時刻が決まっている）</option><option value="rec"'+(kind==='rec'?' selected':'')+'>📝 記録（実際にやったこと）</option><option value="mv"'+(kind==='mv'?' selected':'')+'>🚃 移動</option></select>';
     f+='<label>内容</label><input type="text" data-f="title" value="'+esc(F.title)+'">';
     f+='<label>カテゴリ</label><select data-f="cat">'+catOptions(F.cat)+'</select>';
     if(kind==='task'){
@@ -1134,6 +1222,7 @@ function openEditor(c,onClose,opt){
           +['high','mid','low'].map(p=>'<option value="'+p+'"'+(F.prio===p?' selected':'')+'>'+PRIO_JA[p]+'</option>').join('')+'</select>'
         +(kids.length?'<label>確保時間</label><div class="meta">サブタスクの合計 '+fmtDur(sumEst(t))+'（サブタスクごとに変えてください）</div>'
           :'<label>確保時間（カレンダーに割り当てる時間の合計）</label>'+hmInputs('est',F.est))
+        +(t&&t.win?'<label>割り当てる範囲</label><div class="meta">'+winLabel(t.win)+'（チャットで変えられます）</div><label class="ck"><input type="checkbox" data-f="noWin"'+(F.noWin?' checked':'')+'> 範囲を外す</label>':'')
         +'<label class="ck"><input type="checkbox" data-f="done"'+(F.done?' checked':'')+'> 完了'+(kids.length?'（サブタスクも全部完了にする）':'')+'</label>'
         +(par?'':'<div class="subadd"><label>🧩 サブタスクを追加（1行に1つ。例：資料集め 1時間）</label>'
           +(kids.length?'<div class="meta">今あるもの：'+kids.map(k=>(k.done?'✓':'・')+esc(k.title)).join(' ')+'</div>':'')
@@ -1146,7 +1235,8 @@ function openEditor(c,onClose,opt){
     }else{
       f+='<label>日付</label><input type="date" data-f="date" value="'+F.date+'">'
         +'<label>時間</label><div class="row"><input type="time" step="300" data-f="start" value="'+F.start+'"><span style="align-self:center">〜</span><input type="time" step="300" data-f="end" value="'+F.end+'"></div>'
-        +(kind==='rec'?'':'<label>場所（移動時間を確保）</label><select data-f="place"><option value="">なし</option>'+S.places.filter(p=>p.name).map(p=>'<option'+(p.name===F.place?' selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select>');
+        +(kind==='mv'?'<label>出発地 → 到着地</label><div class="row"><input type="text" data-f="from" value="'+esc(F.from)+'" placeholder="小手指"><span style="align-self:center">→</span><input type="text" data-f="to" value="'+esc(F.to)+'" placeholder="高田馬場"></div><div class="meta">時間は「発〜着」</div>'
+          :kind==='rec'?'':'<label>場所</label><select data-f="place"><option value="">なし</option>'+S.places.filter(p=>p.name).map(p=>'<option'+(p.name===F.place?' selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select>');
     }
     f+='<label>メモ</label><textarea data-f="memo" rows="3" placeholder="必要なもの、URL、注意点など">'+esc(F.memo)+'</textarea>';
     f+='<div class="acts"><button class="btn primary" data-e="save">保存</button><button class="btn" data-e="cancel">やめる</button></div></div>';
@@ -1163,17 +1253,19 @@ function openEditor(c,onClose,opt){
     const title=F.title.trim();if(!title)return alert('内容を入れてください');
     const memo=F.memo.trim(),now=new Date().toISOString();
     let sum;
-    if(kind==='ev'||kind==='rec'){
+    if(kind==='ev'||kind==='rec'||kind==='mv'){
       const s=toMin(F.start),e=toMin(F.end);
       if(!F.date)return alert('日付を入れてください');
-      if(e<=s)return alert('終わりの時刻を始まりより後にしてください');
+      if(e<s||(e===s&&kind!=='ev'))return alert('終わりの時刻を始まりより後にしてください');
       if(t&&hasKids(t))return alert('サブタスクがあるタスクは、予定や記録に変えられません');
       let x=ev;
       if(!x){S.tasks=S.tasks.filter(y=>y.id!==id);if(t)dropAllAuto(t);x={id};S.events.push(x);}
       const wasRec=!!x.rec;
-      Object.assign(x,{title,memo,cat:F.cat,date:F.date,start:s,end:e,place:kind==='rec'?null:(F.place||null)});
+      const wasMv=!!x.move;
+      Object.assign(x,{title,memo,cat:F.cat,date:F.date,start:s,end:e,place:kind==='ev'?(F.place||null):null});
       if(kind==='rec')x.rec=true;else delete x.rec;
-      const changedKind=t||(wasRec!==(kind==='rec'));
+      if(kind==='mv'){x.move=true;x.from=F.from.trim()||null;x.to=F.to.trim()||null;if(x.from||x.to)x.title=(x.from||'')+'→'+(x.to||'');}else{delete x.move;delete x.from;delete x.to;}
+      const changedKind=t||(wasRec!==(kind==='rec'))||(wasMv!==(kind==='mv'));
       if(t)syncParent(parentOf(t));
       sum='✎ '+evKind(x)+(changedKind?'に変えました':'を更新しました')+'\n'+evIcon(x)+' '+x.title+'（'+x.cat+'）\n'+evLabel(x)+(x.rec?'（'+recDur(x)+'）':'')+(x.place?' @'+x.place:'')+movedText(replanAll());
     }else{
@@ -1193,6 +1285,7 @@ function openEditor(c,onClose,opt){
       if(!hasKids(x))x.est=Math.max(5,F.est||S.settings.defEst);
       if(F.done&&!x.done)markDone(x,now);
       if(!F.done&&x.done){reopen(x,now);childrenOf(x).forEach(k=>{if(k.done)reopen(k,now);});}
+      if(F.noWin&&x.win){delete x.win;if(!x.done)wantAlloc(x);}
       if(!x.done&&!hasKids(x)&&(!t||x.est!==oldEst)){x.estGuess=false;wantAlloc(x);}
       let newEv=null;
       if(F.addEv&&!hasKids(x)){
@@ -1351,8 +1444,8 @@ function renderSettings(){
       +(openLabel===c?'<div class="sw">'+HUES.map(x=>'<button title="'+x.n+'" data-cc="'+esc(c)+'" data-h="'+(x.h==null?'':x.h)+'" class="'+(catHue(c)===x.h?'on':'')+'" style="background:'+hueColor(x.h)+'"></button>').join('')+'</div>':'')+'</div>').join('')+'</div>'
     +'<div class="help">左の「≡」をつかんで上下に動かすと並べ替えられます。上のカテゴリほど優先です（組む順番は「優先度 → 期限 → カテゴリの順番」）。<br>色を変えるときは「ラベル」を押します。</div></div>';
   html+='<h2>画面の色</h2><div class="set"><div class="seg2">'+[['dark','黒地'],['light','白地']].map(x=>'<button data-th="'+x[0]+'" class="'+((S.settings.theme||'dark')===x[0]?'on':'')+'">'+x[1]+'</button>').join('')+'</div></div>';
-  html+='<h2>場所と移動時間（家から・片道の分）</h2><div class="help">予定に「@大学」と付けるか、予定名に場所名が入っていると、前後に移動時間を確保します。0なら確保しません。</div>'
-    +S.places.map((p,i)=>'<div class="set row" data-p="'+i+'"><input type="text" value="'+esc(p.name)+'" data-f="name" style="flex:1"><input type="number" min="0" step="5" value="'+p.travel+'" data-f="travel" style="width:80px"><span style="align-self:center">分</span><button class="btn" data-a="pdel">削除</button></div>').join('')
+  html+='<h2>場所</h2><div class="help">予定に「@大学」と付けるか、予定名に場所名が入っていると、その予定に場所が付きます（移動時間は自動では確保しません。移動はチャットで「移動 …」と入れます）。</div>'
+    +S.places.map((p,i)=>'<div class="set row" data-p="'+i+'"><input type="text" value="'+esc(p.name)+'" data-f="name" style="flex:1"><button class="btn" data-a="pdel">削除</button></div>').join('')
     +'<button class="btn" id="padd">＋ 場所を追加</button>';
   html+='<h2>組み方</h2><div class="set"><label>1回の作業の上限（分）</label> <input type="number" step="5" min="10" id="mb" value="'+st.maxBlock+'" style="width:80px"><br><br>'
     +'<label>作業の間の休憩（分）</label> <input type="number" step="5" min="0" id="bk" value="'+st.brk+'" style="width:80px"><br><br>'
