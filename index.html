@@ -453,7 +453,6 @@ function replanAll(exceptId){
 function placeTask(t,need){
   const now=new Date(),today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
   const nowMin=ceil5(now.getHours()*60+now.getMinutes());
-  const {maxBlock,brk}=S.settings;
   const w=effWin(t),wf=w&&w.from?new Date(w.from):null,wt=w&&w.to?new Date(w.to):null;
   for(let i=0;i<62&&need>0;i++){
     const d=addDays(today,i);
@@ -462,15 +461,9 @@ function placeTask(t,need){
     const hi=wt?Math.min(1440,Math.round((wt-d)/60000)):1440;
     for(const g0 of gapsOf(busyFor(d),i===0?nowMin:0)){
       const g=[Math.max(ceil5(g0[0]),ceil5(lo)),Math.min(Math.floor(g0[1]/5)*5,hi)];
-      let cur=g[0];
-      while(need>0&&g[1]-cur>=10){
-        let len=Math.min(need,maxBlock,g[1]-cur);if(len<5)break;
-        if(len<need&&need-len<10&&need-10>=10)len=need-10;
-        S.events.push({id:uid(),title:slotTitle(t),cat:t.cat,date:dkey(d),start:cur,end:cur+len,place:null,taskId:t.id,auto:true});
-        need-=len;cur+=len;
-        if(need>0)cur+=brk;
-      }
-      if(need<=0)break;
+      if(g[1]-g[0]<need)continue;
+      S.events.push({id:uid(),title:slotTitle(t),cat:t.cat,date:dkey(d),start:g[0],end:g[0]+need,place:null,taskId:t.id,auto:true});
+      need=0;break;
     }
   }
   if(t.pendingAlloc)t.allocAt=now.toISOString();
@@ -486,12 +479,12 @@ function allocText(t){
   if(hasKids(t))return childrenOf(t).filter(k=>!k.done).map(k=>'・'+k.title+'：'+allocText(k).replace(/^割り当て：/,'')).join('\n');
   const all=futureSlots(t);
   const w=effWin(t);
-  if(!all.length)return (w?'割り当てる範囲（'+winLabel(w)+'）に':'割り当てられる')+'空きがありませんでした';
+  if(!all.length)return (t.allocShort?'まとまった'+fmtDur(t.allocShort)+'の空きが'+(w?'割り当てる範囲（'+winLabel(w)+'）に':'')+'見つかりませんでした':(w?'割り当てる範囲（'+winLabel(w)+'）に':'割り当てられる')+'空きがありませんでした');
   const dl=effDeadline(t);
   const late=dl&&all.some(e=>evEndDate(e)>new Date(dl));
   return '割り当て：'+all.slice(0,3).map(evLabel).join('、')+(all.length>3?' ほか'+(all.length-3)+'回':'')
     +(w?'\n割り当てる範囲：'+winLabel(w):'')
-    +(t.allocShort?'\n⚠ '+fmtDur(t.allocShort)+'ぶん'+(w?'範囲に':'')+'入りきりませんでした':'')+(late?'\n⚠ 期限に間に合わない割り当てがあります':'');
+    +(t.allocShort?'\n⚠ 残りの'+fmtDur(t.allocShort)+'がまとまって入る空きが'+(w?'範囲に':'')+'見つかりませんでした':'')+(late?'\n⚠ 期限に間に合わない割り当てがあります':'');
 }
 function needsAlloc(t){
   if(t.done||hasKids(t)||futureSlots(t).length)return false;
@@ -782,6 +775,7 @@ const HELP=`■ 言葉
 1. 優先度（#高 > #中 > #低。書かないと中）
 2. → 期限が近い順
 3. → カテゴリの順番（設定で並べ替え。上ほど優先）
+確保時間は分けずに、まとめて入る最初の空きに置きます（長いタスクを分けたいときはサブタスクに）。
 始まっている割り当てと、時間の過ぎた割り当ては動かしません。
 
 ■ そのほか
@@ -1447,8 +1441,7 @@ function renderSettings(){
   html+='<h2>場所</h2><div class="help">予定に「@大学」と付けるか、予定名に場所名が入っていると、その予定に場所が付きます（移動時間は自動では確保しません。移動はチャットで「移動 …」と入れます）。</div>'
     +S.places.map((p,i)=>'<div class="set row" data-p="'+i+'"><input type="text" value="'+esc(p.name)+'" data-f="name" style="flex:1"><button class="btn" data-a="pdel">削除</button></div>').join('')
     +'<button class="btn" id="padd">＋ 場所を追加</button>';
-  html+='<h2>組み方</h2><div class="set"><label>1回の作業の上限（分）</label> <input type="number" step="5" min="10" id="mb" value="'+st.maxBlock+'" style="width:80px"><br><br>'
-    +'<label>作業の間の休憩（分）</label> <input type="number" step="5" min="0" id="bk" value="'+st.brk+'" style="width:80px"><br><br>'
+  html+='<h2>組み方</h2><div class="set"><div class="help">タスクの確保時間は分けずに、まとめて1か所に置きます。</div><br>'
     +'<label>確保時間を書かなかったとき（分）</label> <input type="number" step="5" min="5" id="de" value="'+st.defEst+'" style="width:80px"></div>';
   html+='<h2>データ</h2><div class="set shiftbox"><div class="help">別の端末や古い版へ移すときは、「書き出し」で出た文字を全部コピーし、移したい側の下の欄に貼って「読み込む」を押します。ファイルでも移せます。</div>'
     +'<div class="acts" style="margin-top:8px;flex-wrap:wrap;display:flex;gap:6px"><button class="btn" id="exp">書き出し</button><button class="btn" id="expf">ファイルで保存</button><button class="btn" id="clr">チャット履歴を消す</button></div>'
@@ -1478,8 +1471,6 @@ function renderSettings(){
     el.querySelector('[data-a=pdel]').onclick=()=>{S.places.splice(+el.dataset.p,1);save();renderAll();};
   });
   $('#padd').onclick=()=>{S.places.push({name:'',travel:0});save();renderAll();};
-  $('#mb').onchange=e=>{st.maxBlock=Math.max(10,+e.target.value);save();renderAll(true);};
-  $('#bk').onchange=e=>{st.brk=Math.max(0,+e.target.value);save();renderAll(true);};
   $('#de').onchange=e=>{st.defEst=Math.max(5,+e.target.value);save();};
   const io=$('#ioTx'),msg=t=>$('#ioMsg').textContent=t;
   $('#exp').onclick=async()=>{
